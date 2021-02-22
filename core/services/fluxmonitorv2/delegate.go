@@ -2,31 +2,84 @@ package fluxmonitorv2
 
 import (
 	"github.com/pkg/errors"
+	"github.com/smartcontractkit/chainlink/core/logger"
+	"github.com/smartcontractkit/chainlink/core/services/eth"
 	"github.com/smartcontractkit/chainlink/core/services/job"
+	"github.com/smartcontractkit/chainlink/core/services/log"
 	"github.com/smartcontractkit/chainlink/core/services/pipeline"
+	corestore "github.com/smartcontractkit/chainlink/core/store"
 	"gorm.io/gorm"
 )
 
 type Delegate struct {
-	pipelineRunner pipeline.Runner
 	db             *gorm.DB
+	store          *corestore.Store
+	jobORM         job.ORM
+	pipelineRunner pipeline.Runner
+	ethClient      eth.Client
+	logBroadcaster log.Broadcaster
+	cfg            Config
 }
 
-func NewDelegate(pipelineRunner pipeline.Runner, db *gorm.DB) *Delegate {
+// NewDelegate constructs a new delegate
+func NewDelegate(
+	store *corestore.Store,
+	jobORM job.ORM,
+	pipelineRunner pipeline.Runner,
+	db *gorm.DB,
+	ethClient eth.Client,
+	logBroadcaster log.Broadcaster,
+	cfg Config,
+) *Delegate {
 	return &Delegate{
-		pipelineRunner,
 		db,
+		store,
+		jobORM,
+		pipelineRunner,
+		ethClient,
+		logBroadcaster,
+		cfg,
 	}
 }
 
+// JobType implements the job.Delegate interface
 func (d *Delegate) JobType() job.Type {
 	return job.FluxMonitor
 }
 
+// ServicesForSpec returns the flux monitor service for the job spec
 func (d *Delegate) ServicesForSpec(spec job.SpecDB) (services []job.Service, err error) {
 	if spec.FluxMonitorSpec == nil {
 		return nil, errors.Errorf("Delegate expects a *job.FluxMonitorSpec to be present, got %v", spec)
 	}
-	// TODO
-	return nil, nil
+
+	factory := fluxMonitorFactory{
+		db:             NewDatabase(d.store, d.jobORM),
+		logBroadcaster: d.logBroadcaster,
+	}
+
+	fm, err := factory.New(
+		Specification{
+			ID:                spec.GetID(),
+			JobID:             spec.FluxMonitorSpec.ID,
+			ContractAddress:   spec.FluxMonitorSpec.ContractAddress,
+			Precision:         spec.FluxMonitorSpec.Precision,
+			Threshold:         spec.FluxMonitorSpec.Threshold,
+			AbsoluteThreshold: spec.FluxMonitorSpec.AbsoluteThreshold,
+			PollTimerPeriod:   spec.FluxMonitorSpec.PollTimerPeriod,
+			PollTimerDisabled: spec.FluxMonitorSpec.PollTimerDisabled,
+			IdleTimerPeriod:   spec.FluxMonitorSpec.IdleTimerPeriod,
+			IdleTimerDisabled: spec.FluxMonitorSpec.IdleTimerDisabled,
+		},
+		PipelineRun{
+			runner: d.pipelineRunner,
+			spec:   *spec.PipelineSpec,
+			jobID:  spec.ID,
+			logger: *logger.Default,
+		},
+		d.cfg.MinContractPayment,
+		d.cfg,
+	)
+
+	return []job.Service{fm}, nil
 }

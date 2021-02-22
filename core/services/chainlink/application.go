@@ -184,8 +184,17 @@ func NewApplication(config *orm.Config, ethClient eth.Client, advisoryLocker pos
 				store.DB,
 			),
 			job.FluxMonitor: fluxmonitorv2.NewDelegate(
+				store,
+				jobORM,
 				pipelineRunner,
 				store.DB,
+				ethClient,
+				logBroadcaster,
+				fluxmonitorv2.Config{
+					DefaultHTTPTimeout:   store.Config.DefaultHTTPTimeout().Duration(),
+					FlagsContractAddress: store.Config.FlagsContractAddress(),
+					MinContractPayment:   store.Config.MinimumContractPayment(),
+				},
 			),
 		}
 	)
