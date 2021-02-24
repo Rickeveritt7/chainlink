@@ -130,6 +130,27 @@ func (_m *ORM) FindBridge(name models.TaskType) (models.BridgeType, error) {
 	return r0, r1
 }
 
+// FindRun provides a mock function with given fields: id
+func (_m *ORM) FindRun(id int64) (pipeline.Run, error) {
+	ret := _m.Called(id)
+
+	var r0 pipeline.Run
+	if rf, ok := ret.Get(0).(func(int64) pipeline.Run); ok {
+		r0 = rf(id)
+	} else {
+		r0 = ret.Get(0).(pipeline.Run)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(int64) error); ok {
+		r1 = rf(id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // InsertFinishedRunWithResults provides a mock function with given fields: ctx, run, trrs
 func (_m *ORM) InsertFinishedRunWithResults(ctx context.Context, run pipeline.Run, trrs []pipeline.TaskRunResult) (int64, error) {
 	ret := _m.Called(ctx, run, trrs)

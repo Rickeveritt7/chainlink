@@ -94,3 +94,30 @@ func Test_PipelineORM_UpdatePipelineRun(t *testing.T) {
 		require.NotNil(t, run.FinishedAt)
 	})
 }
+
+func Test_PipelineORM_FindRun(t *testing.T) {
+	store, cleanup := cltest.NewStore(t)
+	defer cleanup()
+	db := store.DB
+
+	eventBroadcaster := new(mocks.EventBroadcaster)
+	orm := pipeline.NewORM(db, store.Config, eventBroadcaster)
+
+	// job := cltest.MustInsertSampleDirectRequestJob(t, db)
+	pr := Run{}
+
+	run, err := orm.FindRun(job.ID)
+	require.NoError(t, err)
+
+	// Check that JobRun, TaskRuns were created
+
+	var prs []pipeline.Run
+	var trs []pipeline.TaskRun
+
+	require.NoError(t, db.Find(&prs).Error)
+	require.NoError(t, db.Find(&trs).Error)
+
+	require.Len(t, prs, 1)
+	require.Equal(t, runID, prs[0].ID)
+	require.Len(t, trs, 4)
+}
