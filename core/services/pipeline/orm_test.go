@@ -103,21 +103,11 @@ func Test_PipelineORM_FindRun(t *testing.T) {
 	eventBroadcaster := new(mocks.EventBroadcaster)
 	orm := pipeline.NewORM(db, store.Config, eventBroadcaster)
 
-	// job := cltest.MustInsertSampleDirectRequestJob(t, db)
-	pr := Run{}
+	require.NoError(t, db.Exec(`SET CONSTRAINTS pipeline_runs_pipeline_spec_id_fkey DEFERRED`).Error)
+	expected := cltest.MustInsertPipelineRun(t, db)
 
-	run, err := orm.FindRun(job.ID)
+	run, err := orm.FindRun(expected.ID)
 	require.NoError(t, err)
 
-	// Check that JobRun, TaskRuns were created
-
-	var prs []pipeline.Run
-	var trs []pipeline.TaskRun
-
-	require.NoError(t, db.Find(&prs).Error)
-	require.NoError(t, db.Find(&trs).Error)
-
-	require.Len(t, prs, 1)
-	require.Equal(t, runID, prs[0].ID)
-	require.Len(t, trs, 4)
+	require.Equal(t, expected.ID, run.ID)
 }

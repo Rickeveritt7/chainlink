@@ -8,24 +8,40 @@ import (
 	"github.com/smartcontractkit/chainlink/core/services/job"
 	"github.com/smartcontractkit/chainlink/core/services/pipeline"
 	corestore "github.com/smartcontractkit/chainlink/core/store"
-	"github.com/smartcontractkit/chainlink/core/store/models"
 	"gorm.io/gorm"
 )
+
+//go:generate mockery --name Store --output ./mocks/ --case=underscore
 
 type Store interface {
 	RecordError(jobID int32, description string)
 	KeyStoreAccounts() []accounts.Account
 	MostRecentFluxMonitorRoundID(aggregator common.Address) (uint32, error)
 	DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error
-	FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (models.FluxMonitorRoundStats, error)
-	FindPipelineRun()
+	FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (FluxMonitorRoundStatsV2, error)
+	UpdateFluxMonitorRoundStats(aggregator common.Address, roundID uint32, runID int64) error
+	FindPipelineRun(runID int64) (pipeline.Run, error)
 }
 
 type store struct {
 	db          *gorm.DB
-	cstore      corestore.Store
+	cstore      *corestore.Store
 	jobORM      job.ORM
 	pipelineORM pipeline.ORM
+}
+
+func NewStore(
+	db *gorm.DB,
+	cstore *corestore.Store,
+	jobORM job.ORM,
+	pipelineORM pipeline.ORM,
+) *store {
+	return &store{
+		db,
+		cstore,
+		jobORM,
+		pipelineORM,
+	}
 }
 
 // RecordError records an job error in the DB. wraps the jobORM RecordError
@@ -59,7 +75,7 @@ func (s *store) MostRecentFluxMonitorRoundID(aggregator common.Address) (uint32,
 // given round
 func (s *store) DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error {
 	return s.db.Exec(`
-        DELETE FROM flux_monitor_round_stats
+        DELETE FROM flux_monitor_round_stats_v2
         WHERE aggregator = ?
           AND round_id >= ?
     `, aggregator, roundID).Error
@@ -76,51 +92,30 @@ func (s *store) FindOrCreateFluxMonitorRoundStats(aggregator common.Address, rou
 	return stats, err
 }
 
+// UpdateFluxMonitorRoundStats trys to create a RoundStat record for the given oracle
+// at the given round. If one already exists, it increments the num_submissions column.
+func (s *store) UpdateFluxMonitorRoundStats(aggregator common.Address, roundID uint32, runID int64) error {
+	return s.db.Exec(`
+        INSERT INTO flux_monitor_round_stats_v2 (
+            aggregator, round_id, pipeline_run_id, num_new_round_logs, num_submissions
+        ) VALUES (
+            ?, ?, ?, 0, 1
+        ) ON CONFLICT (aggregator, round_id)
+        DO UPDATE SET
+					num_submissions = flux_monitor_round_stats_v2.num_submissions + 1,
+					pipeline_run_id = EXCLUDED.pipeline_run_id
+    `, aggregator, roundID, runID).Error
+}
+
+// CountFluxMonitorRoundStats counts the total number of records
+func (s *store) CountFluxMonitorRoundStats() (int, error) {
+	var count int64
+	err := s.db.Table("flux_monitor_round_stats_v2").Count(&count).Error
+
+	return int(count), err
+}
+
 // FindPipelineRun retrieves a pipeline.Run by id.
 func (s *store) FindPipelineRun(runID int64) (pipeline.Run, error) {
 	return s.pipelineORM.FindRun(runID)
-}
-
-// db wraps the the core store and job orm.
-//
-// TODO - Reimplement the store methods used to remove the dependency on the
-// store package
-type Database struct {
-	store  *corestore.Store
-	jobORM job.ORM
-}
-
-// newDatabase constructs a new database
-func NewDatabase(store *corestore.Store, jobORM job.ORM) *Database {
-	return &Database{
-		store:  store,
-		jobORM: jobORM,
-	}
-}
-
-// RecordError wraps the job ORM record error message, supplying an empty
-// context.
-func (db *Database) RecordError(jobID int32, description string) {
-	db.jobORM.RecordError(context.Background(), jobID, description)
-}
-
-// KeyStoreAccounts gets the node's keys
-func (db *Database) KeyStoreAccounts() []accounts.Account {
-	return db.store.KeyStore.Accounts()
-}
-
-// MostRecentFluxMonitorRoundID fetches the most recent Flux Monitor Round ID
-func (db *Database) MostRecentFluxMonitorRoundID(aggregator common.Address) (uint32, error) {
-	return db.store.MostRecentFluxMonitorRoundID(aggregator)
-}
-
-// DeleteFluxMonitorRoundsBackThrough deletes all the RoundStat records for a
-// given oracle address starting from the most recent round back through the
-// given round
-func (db *Database) DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error {
-	return db.store.DeleteFluxMonitorRoundsBackThrough(aggregator, roundID)
-}
-
-func (db *Database) FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (models.FluxMonitorRoundStats, error) {
-	return db.store.FindOrCreateFluxMonitorRoundStats(aggregator, roundID)
 }

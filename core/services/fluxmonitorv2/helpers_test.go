@@ -34,3 +34,7 @@ func (fm *FluxMonitor) ExportedBacklog() *utils.BoundedPriorityQueue {
 func (fm *FluxMonitor) ExportedRoundState() {
 	fm.roundState(0)
 }
+
+func (fm *FluxMonitor) ExportedRespondToNewRoundLog(log *flux_aggregator_wrapper.FluxAggregatorNewRound) {
+	fm.respondToNewRoundLog(*log)
+}

@@ -35,25 +35,25 @@ func NewPipelineRun(
 
 // Execute executes a pipeline run, extracts the singular result and converts it
 // to a decimal.
-func (run *PipelineRun) Execute() (*decimal.Decimal, error) {
+func (run *PipelineRun) Execute() (int64, *decimal.Decimal, error) {
 	ctx := context.Background()
-	results, err := run.runner.ExecuteAndInsertNewRun(ctx, run.spec, run.logger)
+	runID, results, err := run.runner.ExecuteAndInsertNewRun(ctx, run.spec, run.logger)
 	if err != nil {
-		return nil, errors.Wrapf(err, "error executing new run for job ID %v", run.jobID)
+		return runID, nil, errors.Wrapf(err, "error executing new run for job ID %v", run.jobID)
 	}
 
 	result, err := results.SingularResult()
 	if err != nil {
-		return nil, errors.Wrapf(err, "error getting singular result for job ID %v", run.jobID)
+		return runID, nil, errors.Wrapf(err, "error getting singular result for job ID %v", run.jobID)
 	}
 	if result.Error != nil {
-		return nil, result.Error
+		return runID, nil, result.Error
 	}
 
 	dec, err := utils.ToDecimal(result.Value)
 	if err != nil {
-		return nil, err
+		return runID, nil, err
 	}
 
-	return &dec, nil
+	return runID, &dec, nil
 }

@@ -15,6 +15,7 @@ type Delegate struct {
 	db             *gorm.DB
 	store          *corestore.Store
 	jobORM         job.ORM
+	pipelineORM    pipeline.ORM
 	pipelineRunner pipeline.Runner
 	ethClient      eth.Client
 	logBroadcaster log.Broadcaster
@@ -25,6 +26,7 @@ type Delegate struct {
 func NewDelegate(
 	store *corestore.Store,
 	jobORM job.ORM,
+	pipelineORM pipeline.ORM,
 	pipelineRunner pipeline.Runner,
 	db *gorm.DB,
 	ethClient eth.Client,
@@ -35,6 +37,7 @@ func NewDelegate(
 		db,
 		store,
 		jobORM,
+		pipelineORM,
 		pipelineRunner,
 		ethClient,
 		logBroadcaster,
@@ -54,7 +57,7 @@ func (d *Delegate) ServicesForSpec(spec job.SpecDB) (services []job.Service, err
 	}
 
 	factory := fluxMonitorFactory{
-		db:             NewDatabase(d.store, d.jobORM),
+		store:          NewStore(d.store.DB, d.store, d.jobORM, d.pipelineORM),
 		logBroadcaster: d.logBroadcaster,
 	}
 
