@@ -38,6 +38,7 @@ type Specification struct {
 	PollTimerDisabled bool
 	IdleTimerPeriod   time.Duration
 	IdleTimerDisabled bool
+	MinJobPayment     *assets.Link
 }
 
 // FluxMonitorFactory holds the New method needed to create a new instance
@@ -57,7 +58,6 @@ type fluxMonitorFactory struct {
 func (f fluxMonitorFactory) New(
 	spec Specification,
 	pipelineRun PipelineRun,
-	minJobPayment *assets.Link,
 	cfg Config,
 ) (*FluxMonitor, error) {
 	// Validate the poll timer
@@ -94,6 +94,11 @@ func (f fluxMonitorFactory) New(
 		)
 	}
 
+	paymentChecker := &PaymentChecker{
+		MinContractPayment: cfg.MinContractPayment,
+		MinJobPayment:      spec.MinJobPayment,
+	}
+
 	min, err := fluxAggregator.MinSubmissionValue(nil)
 	if err != nil {
 		return nil, err
@@ -106,14 +111,13 @@ func (f fluxMonitorFactory) New(
 
 	return NewFluxMonitor(
 		pipelineRun,
-		cfg,
 		f.store,
 		NewPollTicker(spec.PollTimerPeriod, spec.PollTimerDisabled),
+		paymentChecker,
 		fluxAggregator,
 		f.logBroadcaster,
 		spec,
 		f.ethClient,
-		minJobPayment,
 		flagsContract,
 		func() { f.logBroadcaster.DependentReady() },
 		min,
@@ -123,11 +127,12 @@ func (f fluxMonitorFactory) New(
 
 // FluxMonitor polls external price adapters via HTTP to check for price swings.
 type FluxMonitor struct {
-	cfg         Config
-	pipelineRun PipelineRun
-	store       Store
-	spec        Specification
-	pollTicker  *PollTicker
+	cfg            Config
+	pipelineRun    PipelineRun
+	store          Store
+	spec           Specification
+	pollTicker     *PollTicker
+	paymentChecker *PaymentChecker
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface
 	logBroadcaster log.Broadcaster
@@ -135,8 +140,7 @@ type FluxMonitor struct {
 	Flags          Flags
 	oracleAddress  common.Address
 
-	ethClient     eth.Client
-	minJobPayment *assets.Link
+	ethClient eth.Client
 
 	isHibernating bool
 	connected     *abool.AtomicBool
@@ -157,31 +161,30 @@ type FluxMonitor struct {
 // NewFluxMonitor returns a new instance of PollingDeviationChecker.
 func NewFluxMonitor(
 	pipelineRun PipelineRun,
-	cfg Config,
 	store Store,
 	pollTicker *PollTicker,
+	paymentChecker *PaymentChecker,
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface,
 	logBroadcaster log.Broadcaster,
 	spec Specification,
 	ethClient eth.Client,
-	minJobPayment *assets.Link,
 	flags flags_wrapper.FlagsInterface,
 	readyForLogs func(),
 	minSubmission, maxSubmission *big.Int,
 ) (*FluxMonitor, error) {
 	fm := &FluxMonitor{
-		pipelineRun: pipelineRun,
-		cfg:         cfg,
-		store:       store,
+		pipelineRun:    pipelineRun,
+		store:          store,
+		pollTicker:     pollTicker,
+		paymentChecker: paymentChecker,
 
-		readyForLogs:     readyForLogs,
-		logBroadcaster:   logBroadcaster,
-		fluxAggregator:   fluxAggregator,
-		spec:             spec,
-		ethClient:        ethClient,
-		minJobPayment:    minJobPayment,
-		pollTicker:       pollTicker,
+		readyForLogs:   readyForLogs,
+		logBroadcaster: logBroadcaster,
+		fluxAggregator: fluxAggregator,
+		spec:           spec,
+		ethClient:      ethClient,
+
 		hibernationTimer: utils.NewResettableTimer(),
 		idleTimer:        utils.NewResettableTimer(),
 		roundTimer:       utils.NewResettableTimer(),
@@ -701,29 +704,17 @@ func (p *FluxMonitor) checkEligibilityAndAggregatorFunding(roundState flux_aggre
 	return nil
 }
 
-// MinFundedRounds defines the minimum number of rounds that needs to be paid
-// to oracles on a contract
-const MinFundedRounds int64 = 3
-
 // sufficientFunds checks if the contract has sufficient funding to pay all the
 // oracles on a contract for a minimum number of rounds, based on the payment
 // amount in the contract
 func (fm *FluxMonitor) sufficientFunds(state flux_aggregator_wrapper.OracleRoundState) bool {
-	min := big.NewInt(int64(state.OracleCount))
-	min = min.Mul(min, big.NewInt(MinFundedRounds))
-	min = min.Mul(min, state.PaymentAmount)
-	return state.AvailableFunds.Cmp(min) >= 0
+	return fm.paymentChecker.SufficientFunds(state)
 }
 
 // sufficientPayment checks if the available payment is enough to submit an answer. It compares
 // the payment amount on chain with the min payment amount listed in the job spec / ENV var.
 func (fm *FluxMonitor) sufficientPayment(payment *big.Int) bool {
-	aboveOrEqMinGlobalPayment := payment.Cmp(fm.cfg.MinContractPayment.ToInt()) >= 0
-	aboveOrEqMinJobPayment := true
-	if fm.minJobPayment != nil {
-		aboveOrEqMinJobPayment = payment.Cmp(fm.minJobPayment.ToInt()) >= 0
-	}
-	return aboveOrEqMinGlobalPayment && aboveOrEqMinJobPayment
+	return fm.paymentChecker.SufficientPayment(payment)
 }
 
 // DeviationThresholds carries parameters used by the threshold-trigger logic
@@ -1042,32 +1033,32 @@ func (fm *FluxMonitor) submitTransaction(
 // 	return nil
 // }
 
-func (p *FluxMonitor) loggerFields(added ...interface{}) []interface{} {
+func (fm *FluxMonitor) loggerFields(added ...interface{}) []interface{} {
 	return append(added, []interface{}{
-		"pollFrequency", p.pollTicker.Interval,
-		"idleDuration", p.spec.IdleTimerPeriod,
-		"contract", p.spec.ContractAddress.Hex(),
-		"jobID", p.spec.JobID,
+		"pollFrequency", fm.pollTicker.Interval,
+		"idleDuration", fm.spec.IdleTimerPeriod,
+		"contract", fm.spec.ContractAddress.Hex(),
+		"jobID", fm.spec.JobID,
 	}...)
 }
 
-func (p *FluxMonitor) loggerFieldsForNewRound(log flux_aggregator_wrapper.FluxAggregatorNewRound) []interface{} {
+func (fm *FluxMonitor) loggerFieldsForNewRound(log flux_aggregator_wrapper.FluxAggregatorNewRound) []interface{} {
 	return []interface{}{
 		"round", log.RoundId,
 		"startedBy", log.StartedBy.Hex(),
 		"startedAt", log.StartedAt.String(),
-		"contract", p.fluxAggregator.Address().Hex(),
-		"jobID", p.spec.JobID,
+		"contract", fm.fluxAggregator.Address().Hex(),
+		"jobID", fm.spec.JobID,
 	}
 }
 
-func (p *FluxMonitor) loggerFieldsForAnswerUpdated(log flux_aggregator_wrapper.FluxAggregatorAnswerUpdated) []interface{} {
+func (fm *FluxMonitor) loggerFieldsForAnswerUpdated(log flux_aggregator_wrapper.FluxAggregatorAnswerUpdated) []interface{} {
 	return []interface{}{
 		"round", log.RoundId,
 		"answer", log.Current.String(),
 		"timestamp", log.UpdatedAt.String(),
-		"contract", p.fluxAggregator.Address().Hex(),
-		"job", p.spec.JobID,
+		"contract", fm.fluxAggregator.Address().Hex(),
+		"job", fm.spec.JobID,
 	}
 }
 

@@ -80,7 +80,6 @@ func (d *Delegate) ServicesForSpec(spec job.SpecDB) (services []job.Service, err
 			jobID:  spec.ID,
 			logger: *logger.Default,
 		},
-		d.cfg.MinContractPayment,
 		d.cfg,
 	)
 

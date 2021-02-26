@@ -315,17 +315,12 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				pipelineRun,
-				fluxmonitorv2.Config{
-					DefaultHTTPTimeout:   time.Minute,
-					FlagsContractAddress: "",
-					MinContractPayment:   assets.NewLink(1),
-				},
 				fmstore,
 				fluxmonitorv2.NewPollTicker(time.Minute, false),
+				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				nil,
 				func() {},
@@ -393,17 +388,12 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		pipelineRun,
-		fluxmonitorv2.Config{
-			DefaultHTTPTimeout:   time.Minute,
-			FlagsContractAddress: "",
-			MinContractPayment:   assets.NewLink(1),
-		},
 		fmstore,
 		fluxmonitorv2.NewPollTicker(time.Minute, false),
+		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		nil,
 		func() {},
@@ -660,17 +650,13 @@ func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.Config{
-					DefaultHTTPTimeout:   time.Minute,
-					FlagsContractAddress: "",
-					MinContractPayment:   assets.NewLink(1),
-				},
+
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
+				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				nil,
 				func() {},
@@ -761,17 +747,12 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutAtZero(t *testing.T) {
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.Config{
-			DefaultHTTPTimeout:   time.Minute,
-			FlagsContractAddress: "",
-			MinContractPayment:   assets.NewLink(1),
-		},
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
+		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		nil,
 		func() {},
@@ -853,17 +834,12 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.Config{
-					DefaultHTTPTimeout:   time.Minute,
-					FlagsContractAddress: "",
-					MinContractPayment:   assets.NewLink(1),
-				},
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
+				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				nil,
 				func() {},
@@ -952,17 +928,12 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.Config{
-					DefaultHTTPTimeout:   time.Minute,
-					FlagsContractAddress: "",
-					MinContractPayment:   assets.NewLink(1),
-				},
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
+				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				nil,
 				func() {},
@@ -1047,17 +1018,12 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutNotZero(t *testing.T) {
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.Config{
-			DefaultHTTPTimeout:   time.Minute,
-			FlagsContractAddress: "",
-			MinContractPayment:   assets.NewLink(1),
-		},
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
+		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		nil,
 		func() {},
@@ -1099,17 +1065,12 @@ func TestFluxMonitor_SufficientFunds(t *testing.T) {
 
 	checker, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.Config{
-			DefaultHTTPTimeout:   time.Minute,
-			FlagsContractAddress: "",
-			MinContractPayment:   assets.NewLink(1),
-		},
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
+		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		nil,
 		func() {},
@@ -1203,18 +1164,13 @@ func TestFluxMonitor_SufficientPayment(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.Config{
-					DefaultHTTPTimeout:   time.Minute,
-					FlagsContractAddress: "",
-					MinContractPayment:   assets.NewLink(tc.minContractPayment),
-				},
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
+				fluxmonitorv2.NewPaymentChecker(assets.NewLink(tc.minContractPayment), minJobPayment),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
 				nil,
-				minJobPayment,
 				nil,
 				func() {},
 				big.NewInt(0),
@@ -1267,17 +1223,12 @@ func TestFluxMonitor_IsFlagLowered(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.Config{
-					DefaultHTTPTimeout:   time.Minute,
-					FlagsContractAddress: "",
-					MinContractPayment:   assets.NewLink(1),
-				},
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
+				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				flagsContract,
 				func() {},
@@ -1312,17 +1263,12 @@ func TestFluxMonitor_HandlesNilLogs(t *testing.T) {
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.Config{
-			DefaultHTTPTimeout:   time.Minute,
-			FlagsContractAddress: "",
-			MinContractPayment:   assets.NewLink(1),
-		},
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
+		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		nil,
 		func() {},
@@ -1369,17 +1315,12 @@ func TestFluxMonitor_ConsumeLogBroadcast(t *testing.T) {
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.Config{
-			DefaultHTTPTimeout:   time.Minute,
-			FlagsContractAddress: "",
-			MinContractPayment:   assets.NewLink(1),
-		},
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
+		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		nil,
 		func() {},
@@ -1437,17 +1378,12 @@ func TestFluxMonitor_ConsumeLogBroadcast_Error(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.Config{
-					DefaultHTTPTimeout:   time.Minute,
-					FlagsContractAddress: "",
-					MinContractPayment:   assets.NewLink(1),
-				},
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
+				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				nil,
 				func() {},
