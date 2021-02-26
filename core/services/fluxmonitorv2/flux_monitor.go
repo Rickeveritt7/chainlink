@@ -108,6 +108,7 @@ func (f fluxMonitorFactory) New(
 		pipelineRun,
 		cfg,
 		f.store,
+		NewPollTicker(spec.PollTimerPeriod, spec.PollTimerDisabled),
 		fluxAggregator,
 		f.logBroadcaster,
 		spec,
@@ -126,6 +127,7 @@ type FluxMonitor struct {
 	pipelineRun PipelineRun
 	store       Store
 	spec        Specification
+	pollTicker  *PollTicker
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface
 	logBroadcaster log.Broadcaster
@@ -136,11 +138,11 @@ type FluxMonitor struct {
 	ethClient     eth.Client
 	minJobPayment *assets.Link
 
-	isHibernating    bool
-	connected        *abool.AtomicBool
-	backlog          *utils.BoundedPriorityQueue
-	chProcessLogs    chan struct{}
-	pollTicker       utils.PausableTicker
+	isHibernating bool
+	connected     *abool.AtomicBool
+	backlog       *utils.BoundedPriorityQueue
+	chProcessLogs chan struct{}
+
 	hibernationTimer utils.ResettableTimer
 	idleTimer        utils.ResettableTimer
 	roundTimer       utils.ResettableTimer
@@ -156,8 +158,9 @@ type FluxMonitor struct {
 func NewFluxMonitor(
 	pipelineRun PipelineRun,
 	cfg Config,
-
 	store Store,
+	pollTicker *PollTicker,
+
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface,
 	logBroadcaster log.Broadcaster,
 	spec Specification,
@@ -178,7 +181,7 @@ func NewFluxMonitor(
 		spec:             spec,
 		ethClient:        ethClient,
 		minJobPayment:    minJobPayment,
-		pollTicker:       utils.NewPausableTicker(spec.PollTimerPeriod),
+		pollTicker:       pollTicker,
 		hibernationTimer: utils.NewResettableTimer(),
 		idleTimer:        utils.NewResettableTimer(),
 		roundTimer:       utils.NewResettableTimer(),
@@ -258,7 +261,7 @@ func (fm *FluxMonitor) isFlagLowered() (bool, error) {
 //
 // INVESTIGATE - Does this error return work?
 func (fm *FluxMonitor) Close() error {
-	fm.pollTicker.Destroy()
+	fm.pollTicker.Stop()
 	fm.hibernationTimer.Stop()
 	fm.idleTimer.Stop()
 	fm.roundTimer.Stop()
@@ -386,7 +389,7 @@ func (p *FluxMonitor) consume() {
 
 		case <-p.pollTicker.Ticks():
 			logger.Debugw("Poll ticker fired",
-				"pollPeriod", p.spec.PollTimerPeriod, // TODO - Make this a readable string
+				"pollPeriod", p.pollTicker.Interval,
 				"idleDuration", p.spec.IdleTimerPeriod, // TODO - Make this a readable string
 				"contract", p.spec.ContractAddress.Hex(),
 			)
@@ -397,7 +400,7 @@ func (p *FluxMonitor) consume() {
 
 		case <-p.idleTimer.Ticks():
 			logger.Debugw("Idle ticker fired",
-				"pollPeriod", p.spec.PollTimerPeriod,
+				"pollPeriod", p.pollTicker.Interval,
 				"idleDuration", p.spec.IdleTimerPeriod,
 				"contract", p.spec.ContractAddress.Hex(),
 			)
@@ -405,7 +408,7 @@ func (p *FluxMonitor) consume() {
 
 		case <-p.roundTimer.Ticks():
 			logger.Debugw("Round timeout ticker fired",
-				"pollPeriod", p.spec.PollTimerPeriod,
+				"pollPeriod", p.pollTicker.Interval,
 				"idleDuration", p.spec.IdleTimerPeriod,
 				"contract", p.spec.ContractAddress.Hex(),
 			)
@@ -455,7 +458,7 @@ func (p *FluxMonitor) performInitialPoll() {
 }
 
 func (p *FluxMonitor) shouldPerformInitialPoll() bool {
-	return !(p.spec.PollTimerDisabled && p.spec.IdleTimerDisabled || p.isHibernating)
+	return !(p.pollTicker.IsDisabled() && p.spec.IdleTimerDisabled || p.isHibernating)
 }
 
 // hibernate restarts the PollingDeviationChecker in hibernation mode
@@ -891,22 +894,22 @@ func (fm *FluxMonitor) initialRoundState() flux_aggregator_wrapper.OracleRoundSt
 	return latestRoundState
 }
 
-func (p *FluxMonitor) resetTickers(roundState flux_aggregator_wrapper.OracleRoundState) {
-	p.resetPollTicker()
-	p.resetHibernationTimer()
-	p.resetIdleTimer(roundState.StartedAt)
-	p.resetRoundTimer(roundStateTimesOutAt(roundState))
+func (fm *FluxMonitor) resetTickers(roundState flux_aggregator_wrapper.OracleRoundState) {
+	fm.resetPollTicker()
+	fm.resetHibernationTimer()
+	fm.resetIdleTimer(roundState.StartedAt)
+	fm.resetRoundTimer(roundStateTimesOutAt(roundState))
 }
 
-func (p *FluxMonitor) setInitialTickers() {
-	p.resetTickers(p.initialRoundState())
+func (fm *FluxMonitor) setInitialTickers() {
+	fm.resetTickers(fm.initialRoundState())
 }
 
-func (p *FluxMonitor) resetPollTicker() {
-	if !p.spec.PollTimerDisabled && !p.isHibernating {
-		p.pollTicker.Resume()
+func (fm *FluxMonitor) resetPollTicker() {
+	if fm.pollTicker.IsEnabled() && !fm.isHibernating {
+		fm.pollTicker.Resume()
 	} else {
-		p.pollTicker.Pause()
+		fm.pollTicker.Pause()
 	}
 }
 
@@ -1041,7 +1044,7 @@ func (fm *FluxMonitor) submitTransaction(
 
 func (p *FluxMonitor) loggerFields(added ...interface{}) []interface{} {
 	return append(added, []interface{}{
-		"pollFrequency", p.spec.PollTimerPeriod,
+		"pollFrequency", p.pollTicker.Interval,
 		"idleDuration", p.spec.IdleTimerPeriod,
 		"contract", p.spec.ContractAddress.Hex(),
 		"jobID", p.spec.JobID,
