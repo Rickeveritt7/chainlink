@@ -1,6 +1,8 @@
 package fluxmonitorv2
 
 import (
+	"reflect"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/smartcontractkit/chainlink/core/internal/gethwrappers/generated/flags_wrapper"
 	"github.com/smartcontractkit/chainlink/core/services/eth"
@@ -26,7 +28,13 @@ func NewFlags(addrHex string, ethClient eth.Client) (*Flags, error) {
 		return flags, err
 	}
 
-	flags.FlagsInterface = contract
+	// This is necessary due to the unfortunate fact that assigning `nil` to an
+	// interface variable causes `x == nil` checks to always return false. If we
+	// do this here, in the constructor, we can avoid using reflection when we
+	// check `p.flags == nil` later in the code.
+	if contract != nil && !reflect.ValueOf(contract).IsNil() {
+		flags.FlagsInterface = contract
+	}
 
 	return flags, nil
 }

@@ -85,18 +85,14 @@ func (f fluxMonitorFactory) New(
 	contractSubmitter := NewFluxAggregatorContractSubmitter(fluxAggregator, spec.TransmissionAddress)
 
 	// Set up the contract flags
-	var flagsContract *flags_wrapper.Flags
-	if cfg.FlagsContractAddress != "" {
-		flagsContractAddress := common.HexToAddress(cfg.FlagsContractAddress)
-		flagsContract, err = flags_wrapper.NewFlags(flagsContractAddress, f.ethClient)
-		logger.ErrorIf(
-			err,
-			fmt.Sprintf(
-				"unable to create Flags contract instance, check address: %s",
-				cfg.FlagsContractAddress,
-			),
-		)
-	}
+	flags, err := NewFlags(cfg.FlagsContractAddress, f.ethClient)
+	logger.ErrorIf(
+		err,
+		fmt.Sprintf(
+			"unable to create Flags contract instance, check address: %s",
+			cfg.FlagsContractAddress,
+		),
+	)
 
 	paymentChecker := &PaymentChecker{
 		MinContractPayment: cfg.MinContractPayment,
@@ -121,10 +117,10 @@ func (f fluxMonitorFactory) New(
 		spec.ContractAddress,
 		contractSubmitter,
 		NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+		*flags,
 		fluxAggregator,
 		f.logBroadcaster,
 		spec,
-		flagsContract,
 		func() { f.logBroadcaster.DependentReady() },
 		min,
 		max,
@@ -133,20 +129,19 @@ func (f fluxMonitorFactory) New(
 
 // FluxMonitor polls external price adapters via HTTP to check for price swings.
 type FluxMonitor struct {
+	contractAddress   common.Address
+	oracleAddress     common.Address
 	pipelineRun       PipelineRun
 	store             Store
 	spec              Specification
 	pollTicker        *PollTicker
 	paymentChecker    *PaymentChecker
-	contractAddress   common.Address
 	contractSubmitter ContractSubmitter
 	deviationChecker  *DeviationChecker
+	flags             Flags
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface
 	logBroadcaster log.Broadcaster
-	flags          flags_wrapper.FlagsInterface
-	Flags          Flags
-	oracleAddress  common.Address
 
 	isHibernating bool
 	connected     *abool.AtomicBool
@@ -173,11 +168,11 @@ func NewFluxMonitor(
 	contractAddress common.Address,
 	contractSubmitter ContractSubmitter,
 	deviationChecker *DeviationChecker,
+	flags Flags,
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface,
 	logBroadcaster log.Broadcaster,
 	spec Specification,
-	flags flags_wrapper.FlagsInterface,
 	readyForLogs func(),
 	minSubmission, maxSubmission *big.Int,
 ) (*FluxMonitor, error) {
@@ -189,6 +184,7 @@ func NewFluxMonitor(
 		contractAddress:   contractAddress,
 		contractSubmitter: contractSubmitter,
 		deviationChecker:  deviationChecker,
+		flags:             flags,
 
 		readyForLogs:   readyForLogs,
 		logBroadcaster: logBroadcaster,
@@ -218,9 +214,9 @@ func NewFluxMonitor(
 	// interface variable causes `x == nil` checks to always return false. If we
 	// do this here, in the constructor, we can avoid using reflection when we
 	// check `p.flags == nil` later in the code.
-	if flags != nil && !reflect.ValueOf(flags).IsNil() {
-		fm.flags = flags
-	}
+	// if flags != nil && !reflect.ValueOf(flags).IsNil() {
+	// 	fm.flags = flags
+	// }
 
 	return fm, nil
 }
@@ -247,7 +243,7 @@ func (fm *FluxMonitor) Start() error {
 }
 
 func (fm *FluxMonitor) setIsHibernatingStatus() {
-	if fm.flags == nil {
+	if !fm.flags.ContractExists() {
 		fm.isHibernating = false
 
 		return
@@ -264,9 +260,7 @@ func (fm *FluxMonitor) setIsHibernatingStatus() {
 }
 
 func (fm *FluxMonitor) isFlagLowered() (bool, error) {
-	flags := Flags{FlagsInterface: fm.flags}
-
-	return flags.IsLowered(fm.contractAddress)
+	return fm.flags.IsLowered(fm.contractAddress)
 }
 
 // Close implements the job.Service interface. It stops this instance from
@@ -377,10 +371,10 @@ func (fm *FluxMonitor) consume() {
 	isConnected := fm.logBroadcaster.Register(fm.fluxAggregator, fm)
 	defer fm.logBroadcaster.Unregister(fm.fluxAggregator, fm)
 
-	if fm.flags != nil {
-		flagsConnected := fm.logBroadcaster.Register(fm.flags, fm)
+	if fm.flags.ContractExists() {
+		flagsConnected := fm.logBroadcaster.Register(fm.flags.Contract(), fm)
 		isConnected = isConnected && flagsConnected
-		defer fm.logBroadcaster.Unregister(fm.flags, fm)
+		defer fm.logBroadcaster.Unregister(fm.flags.Contract(), fm)
 	}
 
 	if isConnected {
@@ -931,9 +925,9 @@ func (fm *FluxMonitor) resetRoundTimer(roundTimesOutAt uint64) {
 	}
 }
 
-func (p *FluxMonitor) resetIdleTimer(roundStartedAtUTC uint64) {
-	if p.isHibernating || p.spec.IdleTimerDisabled {
-		p.idleTimer.Stop()
+func (fm *FluxMonitor) resetIdleTimer(roundStartedAtUTC uint64) {
+	if fm.isHibernating || fm.spec.IdleTimerDisabled {
+		fm.idleTimer.Stop()
 		return
 	} else if roundStartedAtUTC == 0 {
 		// There is no active round, so keep using the idleTimer we already have
@@ -941,9 +935,9 @@ func (p *FluxMonitor) resetIdleTimer(roundStartedAtUTC uint64) {
 	}
 
 	startedAt := time.Unix(int64(roundStartedAtUTC), 0)
-	idleDeadline := startedAt.Add(p.spec.IdleTimerPeriod)
+	idleDeadline := startedAt.Add(fm.spec.IdleTimerPeriod)
 	timeUntilIdleDeadline := time.Until(idleDeadline)
-	loggerFields := p.loggerFields(
+	loggerFields := fm.loggerFields(
 		"startedAt", roundStartedAtUTC,
 		"timeUntilIdleDeadline", timeUntilIdleDeadline,
 	)
@@ -952,7 +946,7 @@ func (p *FluxMonitor) resetIdleTimer(roundStartedAtUTC uint64) {
 		logger.Debugw("not resetting idleTimer, negative duration", loggerFields...)
 		return
 	}
-	p.idleTimer.Reset(timeUntilIdleDeadline)
+	fm.idleTimer.Reset(timeUntilIdleDeadline)
 	logger.Debugw("resetting idleTimer", loggerFields...)
 }
 

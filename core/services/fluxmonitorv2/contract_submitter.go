@@ -10,11 +10,12 @@ import (
 
 //go:generate mockery --name ContractSubmitter --output ./mocks/ --case=underscore
 
-// ContractSubmitter defines an interface to submit an eth transaction
+// ContractSubmitter defines an interface to submit an eth tx.
 type ContractSubmitter interface {
 	Submit(roundID *big.Int, submission *big.Int) error
 }
 
+// FluxAggregatorContractSubmitter submits the polled answer in an eth tx.
 type FluxAggregatorContractSubmitter struct {
 	flux_aggregator_wrapper.FluxAggregatorInterface
 	fromAddress common.Address
