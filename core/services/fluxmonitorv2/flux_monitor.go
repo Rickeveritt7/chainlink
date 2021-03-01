@@ -30,7 +30,7 @@ const hibernationPollPeriod = 24 * time.Hour
 type Specification struct {
 	ID                  string
 	JobID               int32
-	ContractAddress     models.EIP55Address
+	ContractAddress     common.Address
 	Precision           int32
 	Threshold           float32
 	AbsoluteThreshold   float32
@@ -43,7 +43,7 @@ type Specification struct {
 }
 
 // FluxMonitorFactory holds the New method needed to create a new instance
-// of a DeviationChecker.
+// of a FluxMonitor.
 type FluxMonitorFactory interface {
 	New(Specification, PipelineRun, Config) (*FluxMonitor, error)
 }
@@ -74,7 +74,7 @@ func (f fluxMonitorFactory) New(
 	// Set up the flux aggregator
 	f.logBroadcaster.AddDependents(1)
 	fluxAggregator, err := flux_aggregator_wrapper.NewFluxAggregator(
-		spec.ContractAddress.Address(),
+		spec.ContractAddress,
 		f.ethClient,
 	)
 	if err != nil {
@@ -117,6 +117,7 @@ func (f fluxMonitorFactory) New(
 		f.store,
 		NewPollTicker(spec.PollTimerPeriod, spec.PollTimerDisabled),
 		paymentChecker,
+		spec.ContractAddress,
 		contractSubmitter,
 		fluxAggregator,
 		f.logBroadcaster,
@@ -131,12 +132,12 @@ func (f fluxMonitorFactory) New(
 
 // FluxMonitor polls external price adapters via HTTP to check for price swings.
 type FluxMonitor struct {
-	cfg               Config
 	pipelineRun       PipelineRun
 	store             Store
 	spec              Specification
 	pollTicker        *PollTicker
 	paymentChecker    *PaymentChecker
+	contractAddress   common.Address
 	contractSubmitter ContractSubmitter
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface
@@ -169,6 +170,7 @@ func NewFluxMonitor(
 	store Store,
 	pollTicker *PollTicker,
 	paymentChecker *PaymentChecker,
+	contractAddress common.Address,
 	contractSubmitter ContractSubmitter,
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface,
@@ -185,6 +187,7 @@ func NewFluxMonitor(
 		pollTicker:        pollTicker,
 		paymentChecker:    paymentChecker,
 		contractSubmitter: contractSubmitter,
+		contractAddress:   contractAddress,
 
 		readyForLogs:   readyForLogs,
 		logBroadcaster: logBroadcaster,
@@ -263,7 +266,7 @@ func (fm *FluxMonitor) setIsHibernatingStatus() {
 func (fm *FluxMonitor) isFlagLowered() (bool, error) {
 	flags := Flags{FlagsInterface: fm.flags}
 
-	return flags.IsLowered(fm.spec.ContractAddress.Address())
+	return flags.IsLowered(fm.contractAddress)
 }
 
 // Close implements the job.Service interface. It stops this instance from
@@ -283,7 +286,7 @@ func (fm *FluxMonitor) Close() error {
 func (fm *FluxMonitor) OnConnect() {
 	logger.Debugw("Flux Monitor connected to Ethereum node",
 		"jobID", fm.spec.JobID,
-		"address", fm.spec.ContractAddress.Hex(),
+		"address", fm.contractAddress.Hex(),
 	)
 
 	fm.connected.Set()
@@ -293,7 +296,7 @@ func (fm *FluxMonitor) OnConnect() {
 func (fm *FluxMonitor) OnDisconnect() {
 	logger.Debugw("Flux Monitor disconnected from Ethereum node",
 		"jobID", fm.spec.JobID,
-		"address", fm.spec.ContractAddress.Hex(),
+		"address", fm.contractAddress.Hex(),
 	)
 
 	fm.connected.UnSet()
@@ -339,12 +342,12 @@ func (fm *FluxMonitor) HandleLog(broadcast log.Broadcast, err error) {
 		fm.backlog.Add(PriorityAnswerUpdatedLog, broadcast)
 
 	case *flags_wrapper.FlagsFlagRaised:
-		if log.Subject == utils.ZeroAddress || log.Subject == fm.spec.ContractAddress.Address() {
+		if log.Subject == utils.ZeroAddress || log.Subject == fm.contractAddress {
 			fm.backlog.Add(PriorityFlagChangedLog, broadcast)
 		}
 
 	case *flags_wrapper.FlagsFlagLowered:
-		if log.Subject == utils.ZeroAddress || log.Subject == fm.spec.ContractAddress.Address() {
+		if log.Subject == utils.ZeroAddress || log.Subject == fm.contractAddress {
 			fm.backlog.Add(PriorityFlagChangedLog, broadcast)
 		}
 
@@ -403,7 +406,7 @@ func (fm *FluxMonitor) consume() {
 			logger.Debugw("Poll ticker fired",
 				"pollPeriod", fm.pollTicker.Interval,
 				"idleDuration", fm.spec.IdleTimerPeriod, // TODO - Make this a readable string
-				"contract", fm.spec.ContractAddress.Hex(),
+				"contract", fm.contractAddress.Hex(),
 			)
 			fm.pollIfEligible(DeviationThresholds{
 				Rel: float64(fm.spec.Threshold),
@@ -414,7 +417,7 @@ func (fm *FluxMonitor) consume() {
 			logger.Debugw("Idle ticker fired",
 				"pollPeriod", fm.pollTicker.Interval,
 				"idleDuration", fm.spec.IdleTimerPeriod,
-				"contract", fm.spec.ContractAddress.Hex(),
+				"contract", fm.contractAddress.Hex(),
 			)
 			fm.pollIfEligible(DeviationThresholds{Rel: 0, Abs: 0})
 
@@ -422,7 +425,7 @@ func (fm *FluxMonitor) consume() {
 			logger.Debugw("Round timeout ticker fired",
 				"pollPeriod", fm.pollTicker.Interval,
 				"idleDuration", fm.spec.IdleTimerPeriod,
-				"contract", fm.spec.ContractAddress.Hex(),
+				"contract", fm.contractAddress.Hex(),
 			)
 			fm.pollIfEligible(DeviationThresholds{
 				Rel: float64(fm.spec.Threshold),
@@ -476,14 +479,14 @@ func (fm *FluxMonitor) shouldPerformInitialPoll() bool {
 
 // hibernate restarts the PollingDeviationChecker in hibernation mode
 func (fm *FluxMonitor) hibernate() {
-	logger.Infof("entering hibernation mode for contract: %s", fm.spec.ContractAddress.Hex())
+	logger.Infof("entering hibernation mode for contract: %s", fm.contractAddress.Hex())
 	fm.isHibernating = true
 	fm.resetTickers(flux_aggregator_wrapper.OracleRoundState{})
 }
 
 // reactivate restarts the PollingDeviationChecker without hibernation mode
 func (p *FluxMonitor) reactivate() {
-	logger.Infof("exiting hibernation mode, reactivating contract: %s", p.spec.ContractAddress.Hex())
+	logger.Infof("exiting hibernation mode, reactivating contract: %s", p.contractAddress.Hex())
 	p.isHibernating = false
 	p.setInitialTickers()
 	p.pollIfEligible(DeviationThresholds{Rel: 0, Abs: 0})
@@ -609,14 +612,14 @@ func (fm *FluxMonitor) respondToNewRoundLog(log flux_aggregator_wrapper.FluxAggr
 	// We always want to reset the idle timer upon receiving a NewRound log, so we do it before any `return` statements.
 	fm.resetIdleTimer(log.StartedAt.Uint64())
 
-	mostRecentRoundID, err := fm.store.MostRecentFluxMonitorRoundID(fm.spec.ContractAddress.Address())
+	mostRecentRoundID, err := fm.store.MostRecentFluxMonitorRoundID(fm.contractAddress)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		logger.Errorw(fmt.Sprintf("error fetching Flux Monitor most recent round ID from DB: %v", err), fm.loggerFieldsForNewRound(log)...)
 		return
 	}
 
 	if logRoundID < mostRecentRoundID {
-		err = fm.store.DeleteFluxMonitorRoundsBackThrough(fm.spec.ContractAddress.Address(), logRoundID)
+		err = fm.store.DeleteFluxMonitorRoundsBackThrough(fm.contractAddress, logRoundID)
 		if err != nil {
 			logger.Errorw(fmt.Sprintf("error deleting reorged Flux Monitor rounds from DB: %v", err), fm.loggerFieldsForNewRound(log)...)
 			return
@@ -728,7 +731,7 @@ type DeviationThresholds struct {
 func (fm *FluxMonitor) pollIfEligible(thresholds DeviationThresholds) {
 	l := logger.Default.With(
 		"jobID", fm.spec.JobID,
-		"address", fm.spec.ContractAddress.Hex(),
+		"address", fm.contractAddress.Hex(),
 		"threshold", thresholds.Rel,
 		"absoluteThreshold", thresholds.Abs,
 	)
@@ -868,7 +871,7 @@ func (fm *FluxMonitor) initialRoundState() flux_aggregator_wrapper.OracleRoundSt
 		logger.Warnf(
 			"unable to retrieve latestRoundData for FluxAggregator contract %s - defaulting "+
 				"to current time for tickers: %v",
-			fm.spec.ContractAddress.Hex(),
+			fm.contractAddress.Hex(),
 			err,
 		)
 		return defaultRoundState
@@ -878,7 +881,7 @@ func (fm *FluxMonitor) initialRoundState() flux_aggregator_wrapper.OracleRoundSt
 	if err != nil {
 		logger.Warnf(
 			"unable to call roundState for latest round, contract: %s, round: %d, err: %v",
-			fm.spec.ContractAddress.Hex(),
+			fm.contractAddress.Hex(),
 			latestRoundData.RoundId,
 			err,
 		)
@@ -979,13 +982,13 @@ func (fm *FluxMonitor) submitTransaction(
 
 	// Update the flux monitor round stats
 	err := fm.store.UpdateFluxMonitorRoundStats(
-		fm.spec.ContractAddress.Address(),
+		fm.contractAddress,
 		roundID,
 		runID,
 	)
 	if err != nil {
 		logger.Errorw(fmt.Sprintf("error updating FM round submission count: %v", err),
-			"address", fm.spec.ContractAddress.Hex(),
+			"address", fm.contractAddress.Hex(),
 			"roundID", roundID,
 			"jobID", fm.spec.JobID,
 		)
@@ -996,54 +999,11 @@ func (fm *FluxMonitor) submitTransaction(
 	return nil
 }
 
-// func (p *PollingDeviationChecker) createJobRun(
-// 	polledAnswer decimal.Decimal,
-// 	roundID uint32,
-// 	paymentAmount *assets.Link,
-// ) error {
-
-// 	methodID := fluxAggregatorABI.Methods["submit"].ID
-// 	roundIDData := utils.EVMWordUint64(uint64(roundID))
-
-// 	payload, err := json.Marshal(jobRunRequest{
-// 		Result:           polledAnswer,
-// 		Address:          p.spec.ContractAddress.Hex(),
-// 		FunctionSelector: hexutil.Encode(methodID),
-// 		DataPrefix:       hexutil.Encode(roundIDData),
-// 	})
-// 	if err != nil {
-// 		return errors.Wrapf(err, "unable to encode Job Run request in JSON")
-// 	}
-// 	runData, err := models.ParseJSON(payload)
-// 	if err != nil {
-// 		return errors.Wrap(err, fmt.Sprintf("unable to start chainlink run with payload %s", payload))
-// 	}
-// 	runRequest := models.NewRunRequest(runData)
-// 	runRequest.Payment = paymentAmount
-
-// 	jobRun, err := p.runManager.Create(p.initr.JobSpecID, &p.initr, nil, runRequest)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	err = p.store.UpdateFluxMonitorRoundStats(p.initr.Address, roundID, jobRun.ID)
-// 	if err != nil {
-// 		logger.Errorw(fmt.Sprintf("error updating FM round submission count: %v", err),
-// 			"address", p.initr.Address.Hex(),
-// 			"roundID", roundID,
-// 			"jobID", p.initr.JobSpecID.String(),
-// 		)
-// 		return err
-// 	}
-
-// 	return nil
-// }
-
 func (fm *FluxMonitor) loggerFields(added ...interface{}) []interface{} {
 	return append(added, []interface{}{
 		"pollFrequency", fm.pollTicker.Interval,
 		"idleDuration", fm.spec.IdleTimerPeriod,
-		"contract", fm.spec.ContractAddress.Hex(),
+		"contract", fm.contractAddress.Hex(),
 		"jobID", fm.spec.JobID,
 	}...)
 }
@@ -1119,7 +1079,7 @@ func (fm *FluxMonitor) statsAndStatusForRound(roundID uint32) (
 	pipeline.RunStatus,
 	error,
 ) {
-	roundStats, err := fm.store.FindOrCreateFluxMonitorRoundStats(fm.spec.ContractAddress.Address(), roundID)
+	roundStats, err := fm.store.FindOrCreateFluxMonitorRoundStats(fm.contractAddress, roundID)
 	if err != nil {
 		return FluxMonitorRoundStatsV2{}, pipeline.RunStatusUnknown, err
 	}

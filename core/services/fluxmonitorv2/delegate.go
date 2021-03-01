@@ -65,7 +65,7 @@ func (d *Delegate) ServicesForSpec(spec job.SpecDB) (services []job.Service, err
 		Specification{
 			ID:                spec.GetID(),
 			JobID:             spec.FluxMonitorSpec.ID,
-			ContractAddress:   spec.FluxMonitorSpec.ContractAddress,
+			ContractAddress:   spec.FluxMonitorSpec.ContractAddress.Address(),
 			Precision:         spec.FluxMonitorSpec.Precision,
 			Threshold:         spec.FluxMonitorSpec.Threshold,
 			AbsoluteThreshold: spec.FluxMonitorSpec.AbsoluteThreshold,
@@ -83,6 +83,9 @@ func (d *Delegate) ServicesForSpec(spec job.SpecDB) (services []job.Service, err
 		},
 		d.cfg,
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	return []job.Service{fm}, nil
 }

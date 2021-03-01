@@ -39,10 +39,8 @@ const oracleCount uint8 = 17
 type answerSet struct{ latestAnswer, polledAnswer int64 }
 
 var (
-	submitHash     = utils.MustHash("submit(uint256,int256)")
-	submitSelector = submitHash[:4]
-	now            = func() uint64 { return uint64(time.Now().UTC().Unix()) }
-	nilOpts        *bind.CallOpts
+	now     = func() uint64 { return uint64(time.Now().UTC().Unix()) }
+	nilOpts *bind.CallOpts
 
 	makeRoundDataForRoundID = func(roundID uint32) flux_aggregator_wrapper.LatestRoundData {
 		return flux_aggregator_wrapper.LatestRoundData{
@@ -60,7 +58,7 @@ func NewSpecification() fluxmonitorv2.Specification {
 	return fluxmonitorv2.Specification{
 		ID:                  "1",
 		JobID:               1,
-		ContractAddress:     cltest.NewEIP55Address(),
+		ContractAddress:     cltest.NewAddress(),
 		Precision:           2,
 		Threshold:           0.5,
 		AbsoluteThreshold:   0.01,
@@ -203,7 +201,7 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 				spec           = fluxmonitorv2.Specification{
 					ID:                "1",
 					JobID:             1,
-					ContractAddress:   cltest.NewEIP55Address(),
+					ContractAddress:   cltest.NewAddress(),
 					Precision:         2,
 					Threshold:         0.5,
 					AbsoluteThreshold: 0.01,
@@ -241,9 +239,9 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 				}
 
 				fmstore.
-					On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress.Address(), uint32(reportableRoundID)).
+					On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(reportableRoundID)).
 					Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
-						Aggregator:     spec.ContractAddress.Address(),
+						Aggregator:     spec.ContractAddress,
 						RoundID:        reportableRoundID,
 						PipelineRunID:  corenull.Int64From(run.ID),
 						NumSubmissions: 1,
@@ -255,9 +253,9 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 			} else {
 				if tc.connected {
 					fmstore.
-						On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress.Address(), uint32(reportableRoundID)).
+						On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(reportableRoundID)).
 						Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
-							Aggregator: spec.ContractAddress.Address(),
+							Aggregator: spec.ContractAddress,
 							RoundID:    reportableRoundID,
 						}, nil)
 				}
@@ -319,7 +317,7 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 
 				fmstore.
 					On("UpdateFluxMonitorRoundStats",
-						spec.ContractAddress.Address(),
+						spec.ContractAddress,
 						uint32(reportableRoundID),
 						int64(1),
 					).
@@ -331,6 +329,7 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 				fmstore,
 				fluxmonitorv2.NewPollTicker(time.Minute, false),
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 				fluxAggregator,
 				logBroadcaster,
@@ -405,6 +404,7 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 		fmstore,
 		fluxmonitorv2.NewPollTicker(time.Minute, false),
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 		fluxAggregator,
 		logBroadcaster,
@@ -486,21 +486,21 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 	fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(3)).Return(makeRoundStateForRoundID(3), nil).Once()
 	fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(4)).Return(makeRoundStateForRoundID(4), nil).Once()
 	fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
-	fluxAggregator.On("Address").Return(spec.ContractAddress.Address(), nil)
+	fluxAggregator.On("Address").Return(spec.ContractAddress, nil)
 
 	logBroadcaster := new(logmocks.Broadcaster)
 	logBroadcaster.On("Register", mock.Anything, mock.Anything).Return(true)
 	logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
 
-	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress.Address()).Return(uint32(1), nil)
-	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress.Address()).Return(uint32(3), nil)
-	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress.Address()).Return(uint32(4), nil)
+	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(1), nil)
+	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(3), nil)
+	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(4), nil)
 
 	// Round 1
 	fmstore.
-		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress.Address(), uint32(1)).
+		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(1)).
 		Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
-			Aggregator: spec.ContractAddress.Address(),
+			Aggregator: spec.ContractAddress,
 			RoundID:    1,
 		}, nil)
 	pipelineRunner.
@@ -518,7 +518,7 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 	).Return(&types.Transaction{}, nil)
 	fmstore.
 		On("UpdateFluxMonitorRoundStats",
-			spec.ContractAddress.Address(),
+			spec.ContractAddress,
 			uint32(1),
 			mock.AnythingOfType("int64"), //int64(1),
 		).
@@ -526,9 +526,9 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 
 	// Round 3
 	fmstore.
-		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress.Address(), uint32(3)).
+		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(3)).
 		Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
-			Aggregator: spec.ContractAddress.Address(),
+			Aggregator: spec.ContractAddress,
 			RoundID:    3,
 		}, nil)
 	pipelineRunner.
@@ -546,7 +546,7 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 	).Return(&types.Transaction{}, nil)
 	fmstore.
 		On("UpdateFluxMonitorRoundStats",
-			spec.ContractAddress.Address(),
+			spec.ContractAddress,
 			uint32(3),
 			mock.AnythingOfType("int64"), //int64(2),
 
@@ -555,9 +555,9 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 
 	// Round 4
 	fmstore.
-		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress.Address(), uint32(4)).
+		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(4)).
 		Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
-			Aggregator: spec.ContractAddress.Address(),
+			Aggregator: spec.ContractAddress,
 			RoundID:    3,
 		}, nil)
 	pipelineRunner.
@@ -575,7 +575,7 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 	).Return(&types.Transaction{}, nil)
 	fmstore.
 		On("UpdateFluxMonitorRoundStats",
-			spec.ContractAddress.Address(),
+			spec.ContractAddress,
 			uint32(4),
 			mock.AnythingOfType("int64"), //int64(3),
 		).
@@ -588,6 +588,7 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		fmstore,
 		fluxmonitorv2.NewPollTicker(time.Minute, true),
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 		fluxAggregator,
 		logBroadcaster,
@@ -665,7 +666,7 @@ func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
 			answerBigInt := big.NewInt(fetchedAnswer * int64(math.Pow10(int(spec.Precision))))
 
 			fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
-			fluxAggregator.On("Address").Return(spec.ContractAddress.Address()).Maybe()
+			fluxAggregator.On("Address").Return(spec.ContractAddress).Maybe()
 			logBroadcaster.On("Register", mock.Anything, mock.Anything).Return(true)
 			logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
 
@@ -689,6 +690,7 @@ func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 				fluxAggregator,
 				logBroadcaster,
@@ -768,7 +770,7 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutAtZero(t *testing.T) {
 	logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
 
 	fluxAggregator.On("LatestRoundData", nilOpts).Return(makeRoundDataForRoundID(1), nil).Once()
-	fluxAggregator.On("Address").Return(spec.ContractAddress.Address()).Maybe()
+	fluxAggregator.On("Address").Return(spec.ContractAddress).Maybe()
 	roundState0 := flux_aggregator_wrapper.OracleRoundState{RoundId: 1, EligibleToSubmit: false, LatestSubmission: answerBigInt, StartedAt: now()}
 	fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(1)).Return(roundState0, nil).Once() // initialRoundState()
 	fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(0)).Return(flux_aggregator_wrapper.OracleRoundState{
@@ -786,6 +788,7 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutAtZero(t *testing.T) {
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 		fluxAggregator,
 		logBroadcaster,
@@ -849,7 +852,7 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 			logBroadcaster.On("Register", mock.Anything, mock.Anything).Return(true)
 			logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
 
-			fluxAggregator.On("Address").Return(spec.ContractAddress.Address()).Maybe()
+			fluxAggregator.On("Address").Return(spec.ContractAddress).Maybe()
 			fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
 
 			fluxAggregator.On("LatestRoundData", nilOpts).Return(makeRoundDataForRoundID(1), nil).Once()
@@ -874,6 +877,7 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 				fluxAggregator,
 				logBroadcaster,
@@ -943,7 +947,7 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 			logBroadcaster.On("Register", mock.Anything, mock.Anything).Return(true)
 			logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
 
-			fluxAggregator.On("Address").Return(spec.ContractAddress.Address()).Maybe()
+			fluxAggregator.On("Address").Return(spec.ContractAddress).Maybe()
 			fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
 			fluxAggregator.On("LatestRoundData", nilOpts).Return(makeRoundDataForRoundID(1), nil).Once()
 			// first roundstate in setInitialTickers()
@@ -969,6 +973,7 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 				fluxAggregator,
 				logBroadcaster,
@@ -1023,7 +1028,7 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutNotZero(t *testing.T) {
 	logBroadcaster.On("Register", mock.Anything, mock.Anything).Return(true)
 	logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
 
-	fluxAggregator.On("Address").Return(spec.ContractAddress.Address()).Maybe()
+	fluxAggregator.On("Address").Return(spec.ContractAddress).Maybe()
 	fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
 	fluxAggregator.On("LatestRoundData", nilOpts).Return(makeRoundDataForRoundID(1), nil).Once()
 	fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(1)).Return(flux_aggregator_wrapper.OracleRoundState{
@@ -1060,6 +1065,7 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutNotZero(t *testing.T) {
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 		fluxAggregator,
 		logBroadcaster,
@@ -1108,6 +1114,7 @@ func TestFluxMonitor_SufficientFunds(t *testing.T) {
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 		fluxAggregator,
 		logBroadcaster,
@@ -1208,6 +1215,7 @@ func TestFluxMonitor_SufficientPayment(t *testing.T) {
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(tc.minContractPayment), minJobPayment),
+				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 				fluxAggregator,
 				logBroadcaster,
@@ -1259,7 +1267,7 @@ func TestFluxMonitor_IsFlagLowered(t *testing.T) {
 
 			flagsContract.On("GetFlags", mock.Anything, mock.Anything).
 				Run(func(args mock.Arguments) {
-					require.Equal(t, []common.Address{utils.ZeroAddress, spec.ContractAddress.Address()}, args.Get(1).([]common.Address))
+					require.Equal(t, []common.Address{utils.ZeroAddress, spec.ContractAddress}, args.Get(1).([]common.Address))
 				}).
 				Return(tc.getFlagsResult, nil)
 
@@ -1268,6 +1276,7 @@ func TestFluxMonitor_IsFlagLowered(t *testing.T) {
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 				fluxAggregator,
 				logBroadcaster,
@@ -1309,6 +1318,7 @@ func TestFluxMonitor_HandlesNilLogs(t *testing.T) {
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 		fluxAggregator,
 		logBroadcaster,
@@ -1362,6 +1372,7 @@ func TestFluxMonitor_ConsumeLogBroadcast(t *testing.T) {
 		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 		fluxAggregator,
 		logBroadcaster,
@@ -1426,6 +1437,7 @@ func TestFluxMonitor_ConsumeLogBroadcast_Error(t *testing.T) {
 				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
 				fluxAggregator,
 				logBroadcaster,
