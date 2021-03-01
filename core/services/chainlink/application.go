@@ -188,7 +188,7 @@ func NewApplication(config *orm.Config, ethClient eth.Client, advisoryLocker pos
 				pipelineRunner,
 				store.DB,
 			),
-			job.Keeper: keeper.NewDelegate(),
+			job.Keeper: keeper.NewDelegate(store.ORM, store.EthClient),
 		}
 	)
 	if (config.Dev() && config.P2PListenPort() > 0) || config.FeatureOffchainReporting() {
