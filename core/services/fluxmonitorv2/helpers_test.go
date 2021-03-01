@@ -8,7 +8,7 @@ import (
 )
 
 func (fm *FluxMonitor) ExportedPollIfEligible(threshold, absoluteThreshold float64) {
-	fm.pollIfEligible(DeviationThresholds{Rel: threshold, Abs: absoluteThreshold})
+	fm.pollIfEligible(NewDeviationChecker(threshold, absoluteThreshold))
 }
 
 func (fm *FluxMonitor) ExportedSufficientFunds(state flux_aggregator_wrapper.OracleRoundState) bool {

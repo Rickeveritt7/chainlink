@@ -2,7 +2,6 @@ package fluxmonitorv2_test
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/big"
 	"testing"
@@ -331,10 +330,10 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				func() {},
 				big.NewInt(0),
@@ -406,10 +405,10 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		func() {},
 		big.NewInt(0),
@@ -590,10 +589,10 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		func() {},
 		big.NewInt(0),
@@ -692,10 +691,10 @@ func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				func() {},
 				big.NewInt(0),
@@ -790,10 +789,10 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutAtZero(t *testing.T) {
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		func() {},
 		big.NewInt(0),
@@ -879,10 +878,10 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				func() {},
 				big.NewInt(0),
@@ -975,10 +974,10 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				func() {},
 				big.NewInt(0),
@@ -1067,10 +1066,10 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutNotZero(t *testing.T) {
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		func() {},
 		big.NewInt(0),
@@ -1116,10 +1115,10 @@ func TestFluxMonitor_SufficientFunds(t *testing.T) {
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		func() {},
 		big.NewInt(0),
@@ -1217,10 +1216,10 @@ func TestFluxMonitor_SufficientPayment(t *testing.T) {
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(tc.minContractPayment), minJobPayment),
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				func() {},
 				big.NewInt(0),
@@ -1278,10 +1277,10 @@ func TestFluxMonitor_IsFlagLowered(t *testing.T) {
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				flagsContract,
 				func() {},
 				big.NewInt(0),
@@ -1320,10 +1319,10 @@ func TestFluxMonitor_HandlesNilLogs(t *testing.T) {
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		func() {},
 		big.NewInt(0),
@@ -1374,10 +1373,10 @@ func TestFluxMonitor_ConsumeLogBroadcast(t *testing.T) {
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxAggregator,
 		logBroadcaster,
 		spec,
-		nil,
 		nil,
 		func() {},
 		big.NewInt(0),
@@ -1439,10 +1438,10 @@ func TestFluxMonitor_ConsumeLogBroadcast_Error(t *testing.T) {
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxAggregator,
 				logBroadcaster,
 				spec,
-				nil,
 				nil,
 				func() {},
 				big.NewInt(0),
@@ -1671,73 +1670,4 @@ func TestFluxMonitor_DoesNotDoubleSubmit(t *testing.T) {
 	// 		fluxAggregator.AssertExpectations(t)
 	// 		logBroadcaster.AssertExpectations(t)
 	// 	})
-}
-
-type outsideDeviationRow struct {
-	name                string
-	curPrice, nextPrice decimal.Decimal
-	threshold           float64 // in percentage
-	absoluteThreshold   float64
-	expectation         bool
-}
-
-func (o outsideDeviationRow) String() string {
-	return fmt.Sprintf(
-		`{name: "%s", curPrice: %s, nextPrice: %s, threshold: %.2f, `+
-			"absoluteThreshold: %f, expectation: %v}", o.name, o.curPrice, o.nextPrice,
-		o.threshold, o.absoluteThreshold, o.expectation)
-}
-
-func TestOutsideDeviation(t *testing.T) {
-	t.Parallel()
-	f, i := decimal.NewFromFloat, decimal.NewFromInt
-	testCases := []outsideDeviationRow{
-		// Start with a huge absoluteThreshold, to test relative threshold behavior
-		{"0 current price, outside deviation", i(0), i(100), 2, 0, true},
-		{"0 current and next price", i(0), i(0), 2, 0, false},
-
-		{"inside deviation", i(100), i(101), 2, 0, false},
-		{"equal to deviation", i(100), i(102), 2, 0, true},
-		{"outside deviation", i(100), i(103), 2, 0, true},
-		{"outside deviation zero", i(100), i(0), 2, 0, true},
-
-		{"inside deviation, crosses 0 backwards", f(0.1), f(-0.1), 201, 0, false},
-		{"equal to deviation, crosses 0 backwards", f(0.1), f(-0.1), 200, 0, true},
-		{"outside deviation, crosses 0 backwards", f(0.1), f(-0.1), 199, 0, true},
-
-		{"inside deviation, crosses 0 forwards", f(-0.1), f(0.1), 201, 0, false},
-		{"equal to deviation, crosses 0 forwards", f(-0.1), f(0.1), 200, 0, true},
-		{"outside deviation, crosses 0 forwards", f(-0.1), f(0.1), 199, 0, true},
-
-		{"thresholds=0, deviation", i(0), i(100), 0, 0, true},
-		{"thresholds=0, no deviation", i(100), i(100), 0, 0, true},
-		{"thresholds=0, all zeros", i(0), i(0), 0, 0, true},
-	}
-
-	c := func(test outsideDeviationRow) {
-		actual := fluxmonitorv2.OutsideDeviation(test.curPrice, test.nextPrice,
-			fluxmonitorv2.DeviationThresholds{Rel: test.threshold,
-				Abs: test.absoluteThreshold})
-		assert.Equal(t, test.expectation, actual,
-			"check on OutsideDeviation failed for %s", test)
-	}
-
-	for _, tc := range testCases {
-		tc := tc
-		// Checks on relative threshold
-		t.Run(tc.name, func(t *testing.T) { c(tc) })
-		// Check corresponding absolute threshold tests; make relative threshold
-		// always pass (as long as curPrice and nextPrice aren't both 0.)
-		test2 := tc
-		test2.threshold = 0
-		// absoluteThreshold is initially zero, so any change will trigger
-		test2.expectation = test2.curPrice.Sub(tc.nextPrice).Abs().GreaterThan(i(0)) ||
-			test2.absoluteThreshold == 0
-		t.Run(tc.name+" threshold zeroed", func(t *testing.T) { c(test2) })
-		// Huge absoluteThreshold means trigger always fails
-		test3 := tc
-		test3.absoluteThreshold = 1e307
-		test3.expectation = false
-		t.Run(tc.name+" max absolute threshold", func(t *testing.T) { c(test3) })
-	}
 }

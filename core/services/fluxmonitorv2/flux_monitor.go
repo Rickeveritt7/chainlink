@@ -28,12 +28,13 @@ const hibernationPollPeriod = 24 * time.Hour
 
 // Specification defines the Flux Monitor specification
 type Specification struct {
-	ID                  string
-	JobID               int32
+	ID    string
+	JobID int32
+
 	ContractAddress     common.Address
 	Precision           int32
-	Threshold           float32
-	AbsoluteThreshold   float32
+	Threshold           float64
+	AbsoluteThreshold   float64
 	PollTimerPeriod     time.Duration
 	PollTimerDisabled   bool
 	IdleTimerPeriod     time.Duration
@@ -119,10 +120,10 @@ func (f fluxMonitorFactory) New(
 		paymentChecker,
 		spec.ContractAddress,
 		contractSubmitter,
+		NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxAggregator,
 		f.logBroadcaster,
 		spec,
-		f.ethClient,
 		flagsContract,
 		func() { f.logBroadcaster.DependentReady() },
 		min,
@@ -139,14 +140,13 @@ type FluxMonitor struct {
 	paymentChecker    *PaymentChecker
 	contractAddress   common.Address
 	contractSubmitter ContractSubmitter
+	deviationChecker  *DeviationChecker
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface
 	logBroadcaster log.Broadcaster
 	flags          flags_wrapper.FlagsInterface
 	Flags          Flags
 	oracleAddress  common.Address
-
-	ethClient eth.Client
 
 	isHibernating bool
 	connected     *abool.AtomicBool
@@ -172,11 +172,11 @@ func NewFluxMonitor(
 	paymentChecker *PaymentChecker,
 	contractAddress common.Address,
 	contractSubmitter ContractSubmitter,
+	deviationChecker *DeviationChecker,
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface,
 	logBroadcaster log.Broadcaster,
 	spec Specification,
-	ethClient eth.Client,
 	flags flags_wrapper.FlagsInterface,
 	readyForLogs func(),
 	minSubmission, maxSubmission *big.Int,
@@ -186,14 +186,14 @@ func NewFluxMonitor(
 		store:             store,
 		pollTicker:        pollTicker,
 		paymentChecker:    paymentChecker,
-		contractSubmitter: contractSubmitter,
 		contractAddress:   contractAddress,
+		contractSubmitter: contractSubmitter,
+		deviationChecker:  deviationChecker,
 
 		readyForLogs:   readyForLogs,
 		logBroadcaster: logBroadcaster,
 		fluxAggregator: fluxAggregator,
 		spec:           spec,
-		ethClient:      ethClient,
 
 		hibernationTimer: utils.NewResettableTimer(),
 		idleTimer:        utils.NewResettableTimer(),
@@ -408,10 +408,7 @@ func (fm *FluxMonitor) consume() {
 				"idleDuration", fm.spec.IdleTimerPeriod, // TODO - Make this a readable string
 				"contract", fm.contractAddress.Hex(),
 			)
-			fm.pollIfEligible(DeviationThresholds{
-				Rel: float64(fm.spec.Threshold),
-				Abs: float64(fm.spec.AbsoluteThreshold),
-			})
+			fm.pollIfEligible(fm.deviationChecker)
 
 		case <-fm.idleTimer.Ticks():
 			logger.Debugw("Idle ticker fired",
@@ -419,7 +416,7 @@ func (fm *FluxMonitor) consume() {
 				"idleDuration", fm.spec.IdleTimerPeriod,
 				"contract", fm.contractAddress.Hex(),
 			)
-			fm.pollIfEligible(DeviationThresholds{Rel: 0, Abs: 0})
+			fm.pollIfEligible(NewZeroDeviationChecker())
 
 		case <-fm.roundTimer.Ticks():
 			logger.Debugw("Round timeout ticker fired",
@@ -427,17 +424,16 @@ func (fm *FluxMonitor) consume() {
 				"idleDuration", fm.spec.IdleTimerPeriod,
 				"contract", fm.contractAddress.Hex(),
 			)
-			fm.pollIfEligible(DeviationThresholds{
-				Rel: float64(fm.spec.Threshold),
-				Abs: float64(fm.spec.AbsoluteThreshold),
-			})
+			fm.pollIfEligible(fm.deviationChecker)
 
 		case <-fm.hibernationTimer.Ticks():
-			fm.pollIfEligible(DeviationThresholds{Rel: 0, Abs: 0})
+			fm.pollIfEligible(NewZeroDeviationChecker())
 		}
 	}
 }
 
+// SetOracleAddress sets the oracle address which matches the node's keys.
+// If none match, it uses the first available key
 func (fm *FluxMonitor) SetOracleAddress() error {
 	oracleAddrs, err := fm.fluxAggregator.GetOracles(nil)
 	if err != nil {
@@ -466,10 +462,7 @@ func (fm *FluxMonitor) SetOracleAddress() error {
 // performInitialPoll performs the initial poll if required
 func (fm *FluxMonitor) performInitialPoll() {
 	if fm.shouldPerformInitialPoll() {
-		fm.pollIfEligible(DeviationThresholds{
-			Rel: float64(fm.spec.Threshold),
-			Abs: float64(fm.spec.AbsoluteThreshold),
-		})
+		fm.pollIfEligible(fm.deviationChecker)
 	}
 }
 
@@ -485,16 +478,16 @@ func (fm *FluxMonitor) hibernate() {
 }
 
 // reactivate restarts the PollingDeviationChecker without hibernation mode
-func (p *FluxMonitor) reactivate() {
-	logger.Infof("exiting hibernation mode, reactivating contract: %s", p.contractAddress.Hex())
-	p.isHibernating = false
-	p.setInitialTickers()
-	p.pollIfEligible(DeviationThresholds{Rel: 0, Abs: 0})
+func (fm *FluxMonitor) reactivate() {
+	logger.Infof("exiting hibernation mode, reactivating contract: %s", fm.contractAddress.Hex())
+	fm.isHibernating = false
+	fm.setInitialTickers()
+	fm.pollIfEligible(NewZeroDeviationChecker())
 }
 
-func (p *FluxMonitor) processLogs() {
-	for !p.backlog.Empty() {
-		maybeBroadcast := p.backlog.Take()
+func (fm *FluxMonitor) processLogs() {
+	for !fm.backlog.Empty() {
+		maybeBroadcast := fm.backlog.Take()
 		broadcast, ok := maybeBroadcast.(log.Broadcast)
 		if !ok {
 			logger.Errorf("Failed to convert backlog into LogBroadcast.  Type is %T", maybeBroadcast)
@@ -513,26 +506,26 @@ func (p *FluxMonitor) processLogs() {
 
 		switch log := broadcast.DecodedLog().(type) {
 		case *flux_aggregator_wrapper.FluxAggregatorNewRound:
-			p.respondToNewRoundLog(*log)
+			fm.respondToNewRoundLog(*log)
 			err = broadcast.MarkConsumed()
 
 		case *flux_aggregator_wrapper.FluxAggregatorAnswerUpdated:
-			p.respondToAnswerUpdatedLog(*log)
+			fm.respondToAnswerUpdatedLog(*log)
 			err = broadcast.MarkConsumed()
 
 		case *flags_wrapper.FlagsFlagRaised:
 			// check the contract before hibernating, because one flag could be lowered
 			// while the other flag remains raised
 			var isFlagLowered bool
-			isFlagLowered, err = p.isFlagLowered()
+			isFlagLowered, err = fm.isFlagLowered()
 			logger.ErrorIf(err, "Error determining if flag is still raised")
 			if !isFlagLowered {
-				p.hibernate()
+				fm.hibernate()
 			}
 			err = broadcast.MarkConsumed()
 
 		case *flags_wrapper.FlagsFlagLowered:
-			p.reactivate()
+			fm.reactivate()
 			err = broadcast.MarkConsumed()
 
 		default:
@@ -546,15 +539,15 @@ func (p *FluxMonitor) processLogs() {
 // The AnswerUpdated log tells us that round has successfully closed with a new
 // answer.  We update our view of the oracleRoundState in case this log was
 // generated by a chain reorg.
-func (p *FluxMonitor) respondToAnswerUpdatedLog(log flux_aggregator_wrapper.FluxAggregatorAnswerUpdated) {
-	logger.Debugw("AnswerUpdated log", p.loggerFieldsForAnswerUpdated(log)...)
+func (fm *FluxMonitor) respondToAnswerUpdatedLog(log flux_aggregator_wrapper.FluxAggregatorAnswerUpdated) {
+	logger.Debugw("AnswerUpdated log", fm.loggerFieldsForAnswerUpdated(log)...)
 
-	roundState, err := p.roundState(0)
+	roundState, err := fm.roundState(0)
 	if err != nil {
-		logger.Errorw(fmt.Sprintf("could not fetch oracleRoundState: %v", err), p.loggerFieldsForAnswerUpdated(log)...)
+		logger.Errorw(fmt.Sprintf("could not fetch oracleRoundState: %v", err), fm.loggerFieldsForAnswerUpdated(log)...)
 		return
 	}
-	p.resetTickers(roundState)
+	fm.resetTickers(roundState)
 }
 
 // The NewRound log tells us that an oracle has initiated a new round.  This tells us that we
@@ -698,12 +691,12 @@ var (
 	ErrPaymentTooLow = errors.New("round payment amount < minimum contract payment")
 )
 
-func (p *FluxMonitor) checkEligibilityAndAggregatorFunding(roundState flux_aggregator_wrapper.OracleRoundState) error {
+func (fm *FluxMonitor) checkEligibilityAndAggregatorFunding(roundState flux_aggregator_wrapper.OracleRoundState) error {
 	if !roundState.EligibleToSubmit {
 		return ErrNotEligible
-	} else if !p.sufficientFunds(roundState) {
+	} else if !fm.sufficientFunds(roundState) {
 		return ErrUnderfunded
-	} else if !p.sufficientPayment(roundState.PaymentAmount) {
+	} else if !fm.sufficientPayment(roundState.PaymentAmount) {
 		return ErrPaymentTooLow
 	}
 	return nil
@@ -722,18 +715,12 @@ func (fm *FluxMonitor) sufficientPayment(payment *big.Int) bool {
 	return fm.paymentChecker.SufficientPayment(payment)
 }
 
-// DeviationThresholds carries parameters used by the threshold-trigger logic
-type DeviationThresholds struct {
-	Rel float64 // Relative change required, i.e. |new-old|/|old| >= Rel
-	Abs float64 // Absolute change required, i.e. |new-old| >= Abs
-}
-
-func (fm *FluxMonitor) pollIfEligible(thresholds DeviationThresholds) {
+func (fm *FluxMonitor) pollIfEligible(deviationChecker *DeviationChecker) {
 	l := logger.Default.With(
 		"jobID", fm.spec.JobID,
 		"address", fm.contractAddress.Hex(),
-		"threshold", thresholds.Rel,
-		"absoluteThreshold", thresholds.Abs,
+		"threshold", deviationChecker.Thresholds.Rel,
+		"absoluteThreshold", deviationChecker.Thresholds.Abs,
 	)
 
 	if !fm.connected.IsSet() {
@@ -813,7 +800,7 @@ func (fm *FluxMonitor) pollIfEligible(thresholds DeviationThresholds) {
 		"polledAnswer", polledAnswer,
 	)
 
-	if roundState.RoundId > 1 && !OutsideDeviation(latestAnswer, *polledAnswer, thresholds) {
+	if roundState.RoundId > 1 && !deviationChecker.OutsideDeviation(latestAnswer, *polledAnswer) {
 		l.Debugw("deviation < threshold, not submitting")
 
 		return
@@ -909,24 +896,24 @@ func (fm *FluxMonitor) resetPollTicker() {
 	}
 }
 
-func (p *FluxMonitor) resetHibernationTimer() {
-	if !p.isHibernating {
-		p.hibernationTimer.Stop()
+func (fm *FluxMonitor) resetHibernationTimer() {
+	if !fm.isHibernating {
+		fm.hibernationTimer.Stop()
 	} else {
-		p.hibernationTimer.Reset(hibernationPollPeriod)
+		fm.hibernationTimer.Reset(hibernationPollPeriod)
 	}
 }
 
-func (p *FluxMonitor) resetRoundTimer(roundTimesOutAt uint64) {
-	if p.isHibernating {
-		p.roundTimer.Stop()
+func (fm *FluxMonitor) resetRoundTimer(roundTimesOutAt uint64) {
+	if fm.isHibernating {
+		fm.roundTimer.Stop()
 		return
 	}
 
-	loggerFields := p.loggerFields("timesOutAt", roundTimesOutAt)
+	loggerFields := fm.loggerFields("timesOutAt", roundTimesOutAt)
 
 	if roundTimesOutAt == 0 {
-		p.roundTimer.Stop()
+		fm.roundTimer.Stop()
 		logger.Debugw("disabling roundTimer, no active round", loggerFields...)
 
 	} else {
@@ -934,10 +921,10 @@ func (p *FluxMonitor) resetRoundTimer(roundTimesOutAt uint64) {
 		timeUntilTimeout := time.Until(timesOutAt)
 
 		if timeUntilTimeout <= 0 {
-			p.roundTimer.Stop()
+			fm.roundTimer.Stop()
 			logger.Debugw("roundTimer has run down; disabling", loggerFields...)
 		} else {
-			p.roundTimer.Reset(timeUntilTimeout)
+			fm.roundTimer.Reset(timeUntilTimeout)
 			loggerFields = append(loggerFields, "value", roundTimesOutAt)
 			logger.Debugw("updating roundState.TimesOutAt", loggerFields...)
 		}
@@ -1030,49 +1017,12 @@ func (fm *FluxMonitor) loggerFieldsForAnswerUpdated(log flux_aggregator_wrapper.
 
 // OutsideDeviation checks whether the next price is outside the threshold.
 // If both thresholds are zero (default value), always returns true.
-func OutsideDeviation(curAnswer, nextAnswer decimal.Decimal, thresholds DeviationThresholds) bool {
-	loggerFields := []interface{}{
-		"threshold", thresholds.Rel,
-		"absoluteThreshold", thresholds.Abs,
-		"currentAnswer", curAnswer,
-		"nextAnswer", nextAnswer,
-	}
 
-	if thresholds.Rel == 0 && thresholds.Abs == 0 {
-		logger.Debugw(
-			"Deviation thresholds both zero; short-circuiting deviation checker to "+
-				"true, regardless of feed values", loggerFields...)
-		return true
-	}
-	diff := curAnswer.Sub(nextAnswer).Abs()
-	loggerFields = append(loggerFields, "absoluteDeviation", diff)
+// func OutsideDeviation(curAnswer, nextAnswer decimal.Decimal, thresholds DeviationThresholds) bool {
+// 	checker := NewDeviationChecker(thresholds)
 
-	if !diff.GreaterThan(decimal.NewFromFloat(thresholds.Abs)) {
-		logger.Debugw("Absolute deviation threshold not met", loggerFields...)
-		return false
-	}
-
-	if curAnswer.IsZero() {
-		if nextAnswer.IsZero() {
-			logger.Debugw("Relative deviation is undefined; can't satisfy threshold", loggerFields...)
-			return false
-		}
-		logger.Infow("Threshold met: relative deviation is ∞", loggerFields...)
-		return true
-	}
-
-	// 100*|new-old|/|old|: Deviation (relative to curAnswer) as a percentage
-	percentage := diff.Div(curAnswer.Abs()).Mul(decimal.NewFromInt(100))
-
-	loggerFields = append(loggerFields, "percentage", percentage)
-
-	if percentage.LessThan(decimal.NewFromFloat(thresholds.Rel)) {
-		logger.Debugw("Relative deviation threshold not met", loggerFields...)
-		return false
-	}
-	logger.Infow("Relative and absolute deviation thresholds both met", loggerFields...)
-	return true
-}
+// 	return deviationChecker.OutsideDeviation(curAnswer, nextAnswer)
+// }
 
 func (fm *FluxMonitor) statsAndStatusForRound(roundID uint32) (
 	FluxMonitorRoundStatsV2,
@@ -1084,7 +1034,6 @@ func (fm *FluxMonitor) statsAndStatusForRound(roundID uint32) (
 		return FluxMonitorRoundStatsV2{}, pipeline.RunStatusUnknown, err
 	}
 
-	// fmt.Printf("%+v\n", roundStats)
 	// JobRun will not exist if this is the first time responding to this round
 	var run pipeline.Run
 	if roundStats.PipelineRunID.Valid {
