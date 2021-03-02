@@ -122,6 +122,7 @@ func (o *orm) ClaimUnclaimedJobs(ctx context.Context) ([]SpecDB, error) {
 	var newlyClaimedJobs []SpecDB
 	err := o.db.
 		Joins(join, args...).
+		Preload("FluxMonitorSpec").
 		Preload("OffchainreportingOracleSpec").
 		Preload("PipelineSpec.PipelineTaskSpecs").
 		Find(&newlyClaimedJobs).Error
