@@ -58,6 +58,7 @@ func (d *Delegate) ServicesForSpec(spec job.SpecDB) (services []job.Service, err
 
 	factory := fluxMonitorFactory{
 		store:          NewStore(d.store.DB, d.store, d.jobORM, d.pipelineORM),
+		ethClient:      d.store.EthClient,
 		logBroadcaster: d.logBroadcaster,
 	}
 
