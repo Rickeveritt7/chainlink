@@ -18,26 +18,28 @@ type ContractSubmitter interface {
 // FluxAggregatorContractSubmitter submits the polled answer in an eth tx.
 type FluxAggregatorContractSubmitter struct {
 	flux_aggregator_wrapper.FluxAggregatorInterface
-	fromAddress common.Address
+	store Store
 }
 
 // NewFluxAggregatorContractSubmitter constructs a new NewFluxAggregatorContractSubmitter
-func NewFluxAggregatorContractSubmitter(
-	contract flux_aggregator_wrapper.FluxAggregatorInterface,
-	fromAddress common.Address,
-) *FluxAggregatorContractSubmitter {
+func NewFluxAggregatorContractSubmitter(contract flux_aggregator_wrapper.FluxAggregatorInterface, store Store) *FluxAggregatorContractSubmitter {
 	return &FluxAggregatorContractSubmitter{
 		FluxAggregatorInterface: contract,
-		fromAddress:             fromAddress,
+		store:                   store,
 	}
 }
 
 // Submit submits the answer by writing a EthTx for the bulletprooftxmanager to
 // pick up
-func (c *FluxAggregatorContractSubmitter) Submit(roundID *big.Int, submission *big.Int) error {
-	_, err := c.FluxAggregatorInterface.Submit(&bind.TransactOpts{
-		From: c.fromAddress,
+func (c *FluxAggregatorContractSubmitter) Submit(fromAddress common.Address, roundID *big.Int, submission *big.Int) error {
+	//
+	fromAddress, err := c.store.GetRoundRobinAddress()
+
+	_, err = c.FluxAggregatorInterface.Submit(&bind.TransactOpts{
+		From: fromAddress,
 	}, roundID, submission)
+
+	// bind.NewTransactor()
 
 	return err
 

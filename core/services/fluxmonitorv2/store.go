@@ -2,9 +2,13 @@ package fluxmonitorv2
 
 import (
 	"context"
+	"encoding/hex"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/pkg/errors"
+	"github.com/smartcontractkit/chainlink/core/logger"
 	"github.com/smartcontractkit/chainlink/core/services/job"
 	"github.com/smartcontractkit/chainlink/core/services/pipeline"
 	corestore "github.com/smartcontractkit/chainlink/core/store"
@@ -21,6 +25,7 @@ type Store interface {
 	FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (FluxMonitorRoundStatsV2, error)
 	UpdateFluxMonitorRoundStats(aggregator common.Address, roundID uint32, runID int64) error
 	FindPipelineRun(runID int64) (pipeline.Run, error)
+	GetRoundRobinAddress() (common.Address, error)
 }
 
 type store struct {
@@ -118,4 +123,49 @@ func (s *store) CountFluxMonitorRoundStats() (int, error) {
 // FindPipelineRun retrieves a pipeline.Run by id.
 func (s *store) FindPipelineRun(runID int64) (pipeline.Run, error) {
 	return s.pipelineORM.FindRun(runID)
+}
+
+// CreateEthTransaction creates an ethereum transaction for the BPTXM to pick up
+func (s *store) CreateEthTransaction(
+	fromAddress common.Address,
+	toAddress common.Address,
+	payload []byte,
+	value *big.Int,
+	gasLimit uint64,
+) error {
+	dbtx := s.db.Exec(`
+INSERT INTO eth_txes (from_address, to_address, encoded_payload, value, gas_limit, state, created_at)
+SELECT $1,$2,$3,$4,$5,'unstarted',NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM eth_tx_attempts
+	JOIN eth_txes ON eth_txes.id = eth_tx_attempts.eth_tx_id
+	WHERE eth_txes.from_address = $1
+		AND eth_txes.state = 'unconfirmed'
+		AND eth_tx_attempts.state = 'insufficient_eth'
+);
+`, fromAddress, toAddress, payload, value, gasLimit)
+	if dbtx.Error != nil {
+		return errors.Wrap(dbtx.Error, "failed to insert eth_tx")
+	}
+	if dbtx.RowsAffected == 0 {
+		// Unsure why this would be an wallet out of eth error
+		err := errors.Errorf("Skipped OCR transmission because wallet is out of eth: %s", fromAddress.Hex())
+		logger.Warnw(err.Error(),
+			"fromAddress", fromAddress,
+			"toAddress", toAddress,
+			"payload", "0x"+hex.EncodeToString(payload),
+			"value", value,
+			"gasLimit", gasLimit,
+		)
+
+		return err
+	}
+
+	return nil
+}
+
+// GetRoundRobinAddress queries the database for the address of a random
+// ethereum key derived from the id.
+func (s *store) GetRoundRobinAddress() (common.Address, error) {
+	return s.cstore.GetRoundRobinAddress()
 }

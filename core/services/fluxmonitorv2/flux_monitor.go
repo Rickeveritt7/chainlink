@@ -31,16 +31,15 @@ type Specification struct {
 	ID    string
 	JobID int32
 
-	ContractAddress     common.Address
-	Precision           int32
-	Threshold           float64
-	AbsoluteThreshold   float64
-	PollTimerPeriod     time.Duration
-	PollTimerDisabled   bool
-	IdleTimerPeriod     time.Duration
-	IdleTimerDisabled   bool
-	MinJobPayment       *assets.Link
-	TransmissionAddress common.Address // The address the Eth TX is sent from
+	ContractAddress   common.Address
+	Precision         int32
+	Threshold         float64
+	AbsoluteThreshold float64
+	PollTimerPeriod   time.Duration
+	PollTimerDisabled bool
+	IdleTimerPeriod   time.Duration
+	IdleTimerDisabled bool
+	MinJobPayment     *assets.Link
 }
 
 // FluxMonitorFactory holds the New method needed to create a new instance
@@ -76,13 +75,13 @@ func (f fluxMonitorFactory) New(
 	f.logBroadcaster.AddDependents(1)
 	fluxAggregator, err := flux_aggregator_wrapper.NewFluxAggregator(
 		spec.ContractAddress,
-		f.ethClient,
+		NewFluxMonitorEthClient(f.ethClient, &f.store),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	contractSubmitter := NewFluxAggregatorContractSubmitter(fluxAggregator, spec.TransmissionAddress)
+	contractSubmitter := NewFluxAggregatorContractSubmitter(fluxAggregator)
 
 	// Set up the contract flags
 	flags, err := NewFlags(cfg.FlagsContractAddress, f.ethClient)
