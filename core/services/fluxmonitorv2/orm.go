@@ -2,7 +2,6 @@ package fluxmonitorv2
 
 import (
 	"encoding/hex"
-	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/pkg/errors"
@@ -18,6 +17,7 @@ type ORM interface {
 	DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error
 	FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (FluxMonitorRoundStatsV2, error)
 	UpdateFluxMonitorRoundStats(aggregator common.Address, roundID uint32, runID int64) error
+	CreateEthTransaction(fromAddress, toAddress common.Address, payload []byte, gasLimit uint64) error
 }
 
 type orm struct {
@@ -94,26 +94,29 @@ func (o *orm) CreateEthTransaction(
 	fromAddress common.Address,
 	toAddress common.Address,
 	payload []byte,
-	value *big.Int,
 	gasLimit uint64,
 ) error {
+	// We don't want to send any ETH
+	value := 0
+
 	dbtx := o.db.Exec(`
 INSERT INTO eth_txes (from_address, to_address, encoded_payload, value, gas_limit, state, created_at)
-SELECT $1,$2,$3,$4,$5,'unstarted',NOW()
+SELECT ?,?,?,?,?,'unstarted',NOW()
 WHERE NOT EXISTS (
     SELECT 1 FROM eth_tx_attempts
 	JOIN eth_txes ON eth_txes.id = eth_tx_attempts.eth_tx_id
-	WHERE eth_txes.from_address = $1
+	WHERE eth_txes.from_address = ?
 		AND eth_txes.state = 'unconfirmed'
 		AND eth_tx_attempts.state = 'insufficient_eth'
 );
-`, fromAddress, toAddress, payload, value, gasLimit)
+`, fromAddress, toAddress, payload, value, gasLimit, fromAddress)
 	if dbtx.Error != nil {
 		return errors.Wrap(dbtx.Error, "failed to insert eth_tx")
 	}
 	if dbtx.RowsAffected == 0 {
 		// Unsure why this would be an wallet out of eth error
-		err := errors.Errorf("Skipped OCR transmission because wallet is out of eth: %s", fromAddress.Hex())
+		// TODO - What is this error message
+		err := errors.Errorf("Skipped Flux Monitor submission because wallet is out of eth: %s", fromAddress.Hex())
 		logger.Warnw(err.Error(),
 			"fromAddress", fromAddress,
 			"toAddress", toAddress,

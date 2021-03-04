@@ -13,6 +13,20 @@ type ORM struct {
 	mock.Mock
 }
 
+// CreateEthTransaction provides a mock function with given fields: fromAddress, toAddress, payload, gasLimit
+func (_m *ORM) CreateEthTransaction(fromAddress common.Address, toAddress common.Address, payload []byte, gasLimit uint64) error {
+	ret := _m.Called(fromAddress, toAddress, payload, gasLimit)
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(common.Address, common.Address, []byte, uint64) error); ok {
+		r0 = rf(fromAddress, toAddress, payload, gasLimit)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // DeleteFluxMonitorRoundsBackThrough provides a mock function with given fields: aggregator, roundID
 func (_m *ORM) DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error {
 	ret := _m.Called(aggregator, roundID)

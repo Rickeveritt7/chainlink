@@ -3,11 +3,14 @@ package fluxmonitorv2
 import (
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/pkg/errors"
 	"github.com/smartcontractkit/chainlink/core/internal/gethwrappers/generated/flux_aggregator_wrapper"
+	"github.com/smartcontractkit/chainlink/core/services/eth"
 )
 
 //go:generate mockery --name ContractSubmitter --output ./mocks/ --case=underscore
+
+var FluxAggregatorABI = eth.MustGetABI(flux_aggregator_wrapper.FluxAggregatorABI)
 
 // ContractSubmitter defines an interface to submit an eth tx.
 type ContractSubmitter interface {
@@ -17,52 +20,41 @@ type ContractSubmitter interface {
 // FluxAggregatorContractSubmitter submits the polled answer in an eth tx.
 type FluxAggregatorContractSubmitter struct {
 	flux_aggregator_wrapper.FluxAggregatorInterface
-	orm ORM
+	orm      ORM
+	keyStore KeyStoreInterface
+	gasLimit uint64
 }
 
 // NewFluxAggregatorContractSubmitter constructs a new NewFluxAggregatorContractSubmitter
-func NewFluxAggregatorContractSubmitter(contract flux_aggregator_wrapper.FluxAggregatorInterface, orm ORM) *FluxAggregatorContractSubmitter {
+func NewFluxAggregatorContractSubmitter(
+	contract flux_aggregator_wrapper.FluxAggregatorInterface,
+	orm ORM,
+	keyStore KeyStoreInterface,
+	gasLimit uint64,
+) *FluxAggregatorContractSubmitter {
 	return &FluxAggregatorContractSubmitter{
 		FluxAggregatorInterface: contract,
 		orm:                     orm,
+		keyStore:                keyStore,
+		gasLimit:                gasLimit,
 	}
 }
 
 // Submit submits the answer by writing a EthTx for the bulletprooftxmanager to
 // pick up
 func (c *FluxAggregatorContractSubmitter) Submit(roundID *big.Int, submission *big.Int) error {
-	// fromAddress, err := c.orm.GetRoundRobinAddress()
+	fromAddress, err := c.keyStore.GetRoundRobinAddress()
+	if err != nil {
+		return err
+	}
 
-	_, err := c.FluxAggregatorInterface.Submit(&bind.TransactOpts{
-		// From: fromAddress,
-	}, roundID, submission)
+	payload, err := FluxAggregatorABI.Pack("submit", roundID, submission)
+	if err != nil {
+		return errors.Wrap(err, "abi.Pack failed")
+	}
 
-	// bind.NewTransactor()
-
-	return err
-
-	// return nil
+	return errors.Wrap(
+		c.orm.CreateEthTransaction(fromAddress, c.Address(), payload, c.gasLimit),
+		"failed to send Eth transaction",
+	)
 }
-
-// TransactOpts is the collection of authorization data required to create a
-// valid Ethereum transaction.
-// type TransactOpts struct {
-// 	From   common.Address // Ethereum account to send the transaction from
-// 	Nonce  *big.Int       // Nonce to use for the transaction execution (nil = use pending state)
-// 	Signer SignerFn       // Method to use for signing the transaction (mandatory)
-
-// 	Value    *big.Int // Funds to transfer along the transaction (nil = 0 = no funds)
-// 	GasPrice *big.Int // Gas price to use for the transaction execution (nil = gas price oracle)
-// 	GasLimit uint64   // Gas limit to set for the transaction execution (0 = estimate)
-
-// 	Context context.Context // Network context to support cancellation and timeouts (nil = no timeout)
-// }
-
-// roundIDArg := utils.EVMWordUint64(uint64(roundID))
-
-// _, err := fluxAggregatorABI.Pack("submit", roundIDArg, submission)
-// if err != nil {
-// 	return errors.Wrap(err, "abi.Pack failed")
-// }
-
-// Write an Eth TX to the DB for the bulletproof transaction manager to execute

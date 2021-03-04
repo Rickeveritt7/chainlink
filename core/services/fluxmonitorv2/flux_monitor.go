@@ -77,7 +77,12 @@ func (f fluxMonitorFactory) New(
 		return nil, err
 	}
 
-	contractSubmitter := NewFluxAggregatorContractSubmitter(fluxAggregator, f.orm)
+	contractSubmitter := NewFluxAggregatorContractSubmitter(
+		fluxAggregator,
+		f.orm,
+		f.keyStore,
+		cfg.EthGasLimit,
+	)
 
 	// Set up the contract flags
 	flags, err := NewFlags(cfg.FlagsContractAddress, f.ethClient)
@@ -233,8 +238,6 @@ const (
 
 // Start implements the job.Service interface. It begins the CSP consumer in a
 // single goroutine to poll the price adapters and listen to NewRound events.
-//
-// INVESTIGATE - Does this return an error?
 func (fm *FluxMonitor) Start() error {
 	logger.Debugw("Starting Flux Monitor for job",
 		"job", fm.spec.JobID,

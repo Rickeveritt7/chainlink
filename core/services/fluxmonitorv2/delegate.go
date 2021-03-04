@@ -77,7 +77,7 @@ func (d *Delegate) ServicesForSpec(spec job.SpecDB) (services []job.Service, err
 			PollTimerDisabled: spec.FluxMonitorSpec.PollTimerDisabled,
 			IdleTimerPeriod:   spec.FluxMonitorSpec.IdleTimerPeriod,
 			IdleTimerDisabled: spec.FluxMonitorSpec.IdleTimerDisabled,
-			// MinJobPayment:     spec.FluxMonitorSpec.MinJobPayment,
+			MinJobPayment:     spec.FluxMonitorSpec.MinPayment,
 		},
 		PipelineRun{
 			runner: d.pipelineRunner,

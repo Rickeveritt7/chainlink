@@ -2,14 +2,17 @@ package fluxmonitorv2_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/smartcontractkit/chainlink/core/assets"
 	"github.com/smartcontractkit/chainlink/core/internal/cltest"
 	"github.com/smartcontractkit/chainlink/core/services/fluxmonitorv2"
 	"github.com/smartcontractkit/chainlink/core/services/job"
 	"github.com/smartcontractkit/chainlink/core/services/pipeline"
 	"github.com/smartcontractkit/chainlink/core/services/postgres"
+	"github.com/smartcontractkit/chainlink/core/store/models"
 	"github.com/stretchr/testify/require"
 )
 
@@ -167,4 +170,82 @@ func makeJob(t *testing.T) *job.SpecDB {
 			UpdatedAt:         time.Now(),
 		},
 	}
+}
+
+func TestORM_CreateEthTransaction(t *testing.T) {
+	t.Parallel()
+
+	corestore, cleanup := cltest.NewStore(t)
+	t.Cleanup(cleanup)
+
+	var (
+		orm = fluxmonitorv2.NewORM(corestore.DB)
+
+		key      = cltest.MustInsertRandomKey(t, corestore.DB, 0)
+		from     = key.Address.Address()
+		to       = cltest.NewAddress()
+		payload  = []byte{1, 0, 0}
+		gasLimit = uint64(21000)
+	)
+
+	orm.CreateEthTransaction(from, to, payload, gasLimit)
+
+	etx := models.EthTx{}
+	require.NoError(t, corestore.ORM.DB.First(&etx).Error)
+
+	require.Equal(t, gasLimit, etx.GasLimit)
+	require.Equal(t, from, etx.FromAddress)
+	require.Equal(t, to, etx.ToAddress)
+	require.Equal(t, payload, etx.EncodedPayload)
+	require.Equal(t, assets.NewEthValue(0), etx.Value)
+}
+
+func TestORM_CreateEthTransaction_OutOfEth(t *testing.T) {
+	t.Parallel()
+
+	corestore, cleanup := cltest.NewStore(t)
+	t.Cleanup(cleanup)
+
+	var (
+		orm = fluxmonitorv2.NewORM(corestore.DB)
+
+		key      = cltest.MustInsertRandomKey(t, corestore.DB, 1)
+		otherKey = cltest.MustInsertRandomKey(t, corestore.DB, 1)
+		from     = key.Address.Address()
+		to       = cltest.NewAddress()
+		payload  = []byte{1, 0, 0}
+		gasLimit = uint64(21000)
+	)
+
+	t.Run("if another key has any transactions with insufficient eth errors, transmits as normal", func(t *testing.T) {
+		cltest.MustInsertUnconfirmedEthTxWithInsufficientEthAttempt(t, corestore, 0, otherKey.Address.Address())
+
+		err := orm.CreateEthTransaction(from, to, payload, gasLimit)
+		require.NoError(t, err)
+
+		etx := models.EthTx{}
+		require.NoError(t, corestore.ORM.DB.First(&etx, "nonce IS NULL AND from_address = ?", from).Error)
+		require.Equal(t, payload, etx.EncodedPayload)
+	})
+
+	require.NoError(t, corestore.DB.Exec(`DELETE FROM eth_txes WHERE from_address = ?`, from).Error)
+
+	t.Run("if this key has any transactions with insufficient eth errors, skips transmission entirely", func(t *testing.T) {
+		cltest.MustInsertUnconfirmedEthTxWithInsufficientEthAttempt(t, corestore, 0, from)
+
+		err := orm.CreateEthTransaction(from, to, payload, gasLimit)
+		require.EqualError(t, err, fmt.Sprintf("Skipped Flux Monitor submission because wallet is out of eth: %s", from))
+	})
+
+	t.Run("if this key has transactions but no insufficient eth errors, transmits as normal", func(t *testing.T) {
+		require.NoError(t, corestore.DB.Exec(`UPDATE eth_tx_attempts SET state = 'broadcast'`).Error)
+		require.NoError(t, corestore.DB.Exec(`UPDATE eth_txes SET nonce = 0, state = 'confirmed', broadcast_at = NOW()`).Error)
+
+		err := orm.CreateEthTransaction(from, to, payload, gasLimit)
+		require.NoError(t, err)
+
+		etx := models.EthTx{}
+		require.NoError(t, corestore.ORM.DB.First(&etx, "nonce IS NULL AND from_address = ?", from).Error)
+		require.Equal(t, payload, etx.EncodedPayload)
+	})
 }
