@@ -225,6 +225,7 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 						Val:  pipeline.FinalErrors{null.StringFrom("Random: String, foo")},
 						Null: false,
 					}
+				default:
 				}
 
 				orm.
@@ -1344,12 +1345,12 @@ func TestFluxMonitor_ConsumeLogBroadcast_Error(t *testing.T) {
 			var (
 				fluxAggregator = new(mocks.FluxAggregator)
 				logBroadcaster = new(logmocks.Broadcaster)
+				orm            = new(fmmocks.ORM)
 				jobORM         = new(jobmocks.ORM)
 				pipelineORM    = new(pipelinemocks.ORM)
+				keyStore       = new(fmmocks.KeyStoreInterface)
 				spec           = NewSpecification()
 				pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, false)
-				orm            = new(fmmocks.ORM)
-				keyStore       = new(fmmocks.KeyStoreInterface)
 			)
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
@@ -1384,213 +1385,278 @@ func TestFluxMonitor_ConsumeLogBroadcast_Error(t *testing.T) {
 }
 
 func TestFluxMonitor_DoesNotDoubleSubmit(t *testing.T) {
-	// t.Run("when NewRound log arrives, then poll ticker fires", func(t *testing.T) {
-	// 	store, cleanup := cltest.NewStore(t)
-	// 	defer cleanup()
+	t.Run("when NewRound log arrives, then poll ticker fires", func(t *testing.T) {
+		store, cleanup := cltest.NewStore(t)
+		defer cleanup()
 
-	// 	_, nodeAddr := cltest.MustAddRandomKeyToKeystore(t, store)
-	// 	oracles := []common.Address{nodeAddr, cltest.NewAddress()}
+		_, nodeAddr := cltest.MustAddRandomKeyToKeystore(t, store)
+		oracles := []common.Address{nodeAddr, cltest.NewAddress()}
 
-	// 	// job := cltest.NewJobWithFluxMonitorInitiator()
-	// 	// initr := job.Initiators[0]
-	// 	// initr.ID = 1
-	// 	// initr.PollTimer.Disabled = true
-	// 	// initr.IdleTimer.Disabled = true
-	// 	// run := cltest.NewJobRun(job)
+		var (
+			fluxAggregator = new(mocks.FluxAggregator)
+			logBroadcaster = new(logmocks.Broadcaster)
+			orm            = new(fmmocks.ORM)
+			jobORM         = new(jobmocks.ORM)
+			pipelineORM    = new(pipelinemocks.ORM)
+			keyStore       = new(fmmocks.KeyStoreInterface)
+			pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, true)
 
-	// 	var (
-	// 		// rm             = new(mocks.RunManager)
-	// 		// fetcher        = new(mocks.Fetcher)
-	// 		fluxAggregator = new(mocks.FluxAggregator)
-	// 		logBroadcaster = new(logmocks.Broadcaster)
-	// 		fmstore        = new(fmmocks.Store)
+			spec           = NewSpecification()
+			paymentAmount  = store.Config.MinimumContractPayment().ToInt()
+			availableFunds = big.NewInt(1).Mul(paymentAmount, big.NewInt(1000))
+		)
+		spec.PollTimerDisabled = true
+		spec.IdleTimerDisabled = true
 
-	// 		spec = fluxmonitorv2.Specification{
-	// 			ID:                "1",
-	// 			JobID:             1,
-	// 			ContractAddress:   cltest.NewEIP55Address(),
-	// 			Precision:         2,
-	// 			Threshold:         0.5,
-	// 			AbsoluteThreshold: 0.01,
-	// 			PollTimerPeriod:   time.Minute,
-	// 			PollTimerDisabled: false,
-	// 			IdleTimerPeriod:   time.Minute,
-	// 			IdleTimerDisabled: false,
-	// 		}
-	// 		paymentAmount  = store.Config.MinimumContractPayment().ToInt()
-	// 		availableFunds = big.NewInt(1).Mul(paymentAmount, big.NewInt(1000))
-	// 	)
+		// Setup the Pipeline Run
+		pipelineRunner := new(pipelinemocks.Runner)
+		pipelineSpec := NewPipelineSpec()
+		l := *logger.Default
 
-	// 	const (
-	// 		roundID = 3
-	// 		answer  = 100
-	// 	)
+		pipelineRun := fluxmonitorv2.NewPipelineRun(
+			pipelineRunner,
+			pipelineSpec,
+			spec.JobID,
+			l,
+		)
 
-	// 	fmstore.On("KeyStoreAccounts").Return([]accounts.Account{{Address: nodeAddr}})
+		const (
+			roundID = 3
+			answer  = 100
+		)
 
-	// 	fm, err := fluxmonitorv2.NewFluxMonitor(
-	// 		NewPipelineRun(),
-	// 		fluxmonitorv2.Config{
-	// 			DefaultHTTPTimeout:   time.Minute,
-	// 			FlagsContractAddress: "",
-	// 			MinContractPayment:   assets.NewLink(1),
-	// 		},
-	// 		fmstore,
-	// 		fluxAggregator,
-	// 		logBroadcaster,
-	// 		spec,
-	// 		nil,
-	// 		nil,
-	// 		nil,
-	// 		func() {},
-	// 		big.NewInt(0),
-	// 		big.NewInt(100000000000),
-	// 	)
-	// 	// checker, err := fluxmonitor.NewPollingDeviationChecker(
-	// 	// 	store,
-	// 	// 	fluxAggregator,
-	// 	// 	nil,
-	// 	// 	logBroadcaster,
-	// 	// 	initr,
-	// 	// 	nil,
-	// 	// 	rm,
-	// 	// 	fetcher,
-	// 	// 	func() {},
-	// 	// 	big.NewInt(0),
-	// 	// 	big.NewInt(100000000000),
-	// 	// )
-	// 	require.NoError(t, err)
+		keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
 
-	// 	fluxAggregator.On("Address").Return(spec.ContractAddress.Address())
-	// 	fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
-	// 	fm.SetOracleAddress()
-	// 	fm.OnConnect()
+		fm, err := fluxmonitorv2.NewFluxMonitor(
+			pipelineRun,
+			orm,
+			jobORM,
+			pipelineORM,
+			keyStore,
+			pollTicker,
+			fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+			spec.ContractAddress,
+			fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
+			fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+			fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
+			fluxmonitorv2.Flags{},
+			fluxAggregator,
+			logBroadcaster,
+			spec,
+			func() {},
+		)
+		require.NoError(t, err)
 
-	// 	// Fire off the NewRound log, which the node should respond to
-	// 	fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(roundID)).
-	// 		Return(flux_aggregator_wrapper.OracleRoundState{
-	// 			RoundId:          roundID,
-	// 			LatestSubmission: big.NewInt(answer),
-	// 			EligibleToSubmit: true,
-	// 			AvailableFunds:   availableFunds,
-	// 			PaymentAmount:    paymentAmount,
-	// 			OracleCount:      1,
-	// 		}, nil).
-	// 		Once()
-	// 	// fetcher.On("Fetch", mock.Anything, mock.Anything).
-	// 	// 	Return(decimal.NewFromInt(answer), nil).
-	// 	// 	Once()
-	// 	// rm.On("Create", job.ID, &initr, mock.Anything, mock.Anything).
-	// 	// 	Return(&run, nil).
-	// 	// 	Once()
-	// 	fm.ExportedRespondToNewRoundLog(&flux_aggregator_wrapper.FluxAggregatorNewRound{
-	// 		RoundId:   big.NewInt(roundID),
-	// 		StartedAt: big.NewInt(0),
-	// 	})
+		// Mocks initiated by the New Round log
+		orm.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(roundID), nil).Once()
+		orm.
+			On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(roundID)).
+			Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
+				Aggregator: spec.ContractAddress,
+				RoundID:    roundID,
+			}, nil).Once()
+		pipelineRunner.
+			On("ExecuteAndInsertNewRun", context.Background(), pipelineSpec, l).
+			Return(int64(1), pipeline.FinalResult{
+				Values: []interface{}{decimal.NewFromInt(answer)},
+				Errors: []error{nil},
+			}, nil).Once()
+		fluxAggregator.On("Submit",
+			&bind.TransactOpts{
+				// From: nodeAddr,
+			},
+			big.NewInt(roundID),
+			big.NewInt(answer),
+		).Return(&types.Transaction{}, nil)
+		orm.
+			On("UpdateFluxMonitorRoundStats",
+				spec.ContractAddress,
+				uint32(roundID),
+				int64(1),
+			).
+			Return(nil)
 
-	// 	g := gomega.NewGomegaWithT(t)
-	// 	expectation := func() bool {
-	// 		// jrs, err := store.JobRunsFor(job.ID)
-	// 		// require.NoError(t, err)
-	// 		// return len(jrs) == 1
-	// 		return false
-	// 	}
-	// 	g.Eventually(expectation, cltest.DBWaitTimeout, cltest.DBPollingInterval)
-	// 	g.Consistently(expectation, cltest.DBWaitTimeout, cltest.DBPollingInterval)
+		fluxAggregator.On("Address").Return(spec.ContractAddress)
+		fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
+		fm.SetOracleAddress()
+		fm.OnConnect()
 
-	// 	// Now force the node to try to poll and ensure it does not respond this time
-	// 	fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(0)).
-	// 		Return(flux_aggregator_wrapper.OracleRoundState{
-	// 			RoundId:          roundID,
-	// 			LatestSubmission: big.NewInt(answer),
-	// 			EligibleToSubmit: true,
-	// 			AvailableFunds:   availableFunds,
-	// 			PaymentAmount:    paymentAmount,
-	// 			OracleCount:      1,
-	// 		}, nil).
-	// 		Once()
-	// 	fm.ExportedPollIfEligible(0, 0)
+		// Fire off the NewRound log, which the node should respond to
+		fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(roundID)).
+			Return(flux_aggregator_wrapper.OracleRoundState{
+				RoundId:          roundID,
+				LatestSubmission: big.NewInt(answer),
+				EligibleToSubmit: true,
+				AvailableFunds:   availableFunds,
+				PaymentAmount:    paymentAmount,
+				OracleCount:      1,
+			}, nil).
+			Once()
 
-	// 	fluxAggregator.AssertExpectations(t)
-	// 	logBroadcaster.AssertExpectations(t)
-	// })
+		fm.ExportedRespondToNewRoundLog(&flux_aggregator_wrapper.FluxAggregatorNewRound{
+			RoundId:   big.NewInt(roundID),
+			StartedAt: big.NewInt(0),
+		})
 
-	// 	t.Run("when poll ticker fires, then NewRound log arrives", func(t *testing.T) {
-	// 		store, cleanup := cltest.NewStore(t)
-	// 		defer cleanup()
+		// Mocks initiated by polling
+		// Now force the node to try to poll and ensure it does not respond this time
+		fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(0)).
+			Return(flux_aggregator_wrapper.OracleRoundState{
+				RoundId:          roundID,
+				LatestSubmission: big.NewInt(answer),
+				EligibleToSubmit: true,
+				AvailableFunds:   availableFunds,
+				PaymentAmount:    paymentAmount,
+				OracleCount:      1,
+			}, nil).
+			Once()
+		orm.
+			On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(roundID)).
+			Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
+				PipelineRunID:  corenull.NewInt64(int64(1), true),
+				Aggregator:     spec.ContractAddress,
+				RoundID:        roundID,
+				NumSubmissions: 1,
+			}, nil).Once()
+		now := time.Now()
+		pipelineORM.On("FindRun", int64(1)).Return(pipeline.Run{
+			FinishedAt: &now,
+		}, nil)
 
-	// 		_, nodeAddr := cltest.MustAddRandomKeyToKeystore(t, store)
-	// 		oracles := []common.Address{nodeAddr, cltest.NewAddress()}
+		fm.ExportedPollIfEligible(0, 0)
 
-	// 		job := cltest.NewJobWithFluxMonitorInitiator()
-	// 		initr := job.Initiators[0]
-	// 		initr.ID = 1
-	// 		initr.PollTimer.Disabled = true
-	// 		initr.IdleTimer.Disabled = true
-	// 		run := cltest.NewJobRun(job)
+		fluxAggregator.AssertExpectations(t)
+		logBroadcaster.AssertExpectations(t)
+		keyStore.AssertExpectations(t)
+		orm.AssertExpectations(t)
+		pipelineRunner.AssertExpectations(t)
+	})
 
-	// 		rm := new(mocks.RunManager)
-	// 		fetcher := new(mocks.Fetcher)
-	// 		fluxAggregator := new(mocks.FluxAggregator)
-	// 		logBroadcaster := new(logmocks.Broadcaster)
+	t.Run("when poll ticker fires, then NewRound log arrives", func(t *testing.T) {
+		store, cleanup := cltest.NewStore(t)
+		defer cleanup()
 
-	// 		paymentAmount := store.Config.MinimumContractPayment().ToInt()
-	// 		availableFunds := big.NewInt(1).Mul(paymentAmount, big.NewInt(1000))
+		_, nodeAddr := cltest.MustAddRandomKeyToKeystore(t, store)
+		oracles := []common.Address{nodeAddr, cltest.NewAddress()}
 
-	// 		const (
-	// 			roundID = 3
-	// 			answer  = 100
-	// 		)
+		var (
+			spec           = NewSpecification()
+			fluxAggregator = new(mocks.FluxAggregator)
+			logBroadcaster = new(logmocks.Broadcaster)
+			orm            = new(fmmocks.ORM)
+			jobORM         = new(jobmocks.ORM)
+			pipelineORM    = new(pipelinemocks.ORM)
+			keyStore       = new(fmmocks.KeyStoreInterface)
+			pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, true)
+			pipelineRunner = new(pipelinemocks.Runner)
+			pipelineSpec   = NewPipelineSpec()
+			l              = *logger.Default
+			pipelineRun    = fluxmonitorv2.NewPipelineRun(
+				pipelineRunner,
+				pipelineSpec,
+				spec.JobID,
+				l,
+			)
 
-	// 		checker, err := fluxmonitor.NewPollingDeviationChecker(
-	// 			store,
-	// 			fluxAggregator,
-	// 			nil,
-	// 			logBroadcaster,
-	// 			initr,
-	// 			nil,
-	// 			rm,
-	// 			fetcher,
-	// 			func() {},
-	// 			big.NewInt(0),
-	// 			big.NewInt(100000000000),
-	// 		)
-	// 		require.NoError(t, err)
+			paymentAmount  = store.Config.MinimumContractPayment().ToInt()
+			availableFunds = big.NewInt(1).Mul(paymentAmount, big.NewInt(1000))
+		)
+		spec.PollTimerDisabled = true
+		spec.IdleTimerDisabled = true
 
-	// 		checker.OnConnect()
+		const (
+			roundID = 3
+			answer  = 100
+		)
+		keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
 
-	// 		// First, force the node to try to poll, which should result in a submission
-	// 		fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(0)).
-	// 			Return(flux_aggregator_wrapper.OracleRoundState{
-	// 				RoundId:          roundID,
-	// 				LatestSubmission: big.NewInt(answer),
-	// 				EligibleToSubmit: true,
-	// 				AvailableFunds:   availableFunds,
-	// 				PaymentAmount:    paymentAmount,
-	// 				OracleCount:      1,
-	// 			}, nil).
-	// 			Once()
-	// 		meta := utils.MustUnmarshalToMap(`{"AvailableFunds":100000, "EligibleToSubmit":true, "LatestSubmission":100, "OracleCount":1, "PaymentAmount":100, "RoundId":3, "StartedAt":0, "Timeout":0}`)
-	// 		fetcher.On("Fetch", mock.Anything, meta).
-	// 			Return(decimal.NewFromInt(answer), nil).
-	// 			Once()
-	// 		rm.On("Create", job.ID, &initr, mock.Anything, mock.Anything).
-	// 			Return(&run, nil).
-	// 			Once()
-	// 		fluxAggregator.On("Address").Return(initr.Address)
-	// 		fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
-	// 		checker.SetOracleAddress()
-	// 		checker.ExportedPollIfEligible(0, 0)
+		fm, err := fluxmonitorv2.NewFluxMonitor(
+			pipelineRun,
+			orm,
+			jobORM,
+			pipelineORM,
+			keyStore,
+			pollTicker,
+			fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
+			spec.ContractAddress,
+			fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
+			fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+			fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
+			fluxmonitorv2.Flags{},
+			fluxAggregator,
+			logBroadcaster,
+			spec,
+			func() {},
+		)
+		require.NoError(t, err)
 
-	// 		// Now fire off the NewRound log and ensure it does not respond this time
-	// 		checker.ExportedRespondToNewRoundLog(&flux_aggregator_wrapper.FluxAggregatorNewRound{
-	// 			RoundId:   big.NewInt(roundID),
-	// 			StartedAt: big.NewInt(0),
-	// 		})
+		fm.OnConnect()
 
-	// 		rm.AssertExpectations(t)
-	// 		fetcher.AssertExpectations(t)
-	// 		fluxAggregator.AssertExpectations(t)
-	// 		logBroadcaster.AssertExpectations(t)
-	// 	})
+		// First, force the node to try to poll, which should result in a submission
+		fluxAggregator.On("OracleRoundState", nilOpts, nodeAddr, uint32(0)).
+			Return(flux_aggregator_wrapper.OracleRoundState{
+				RoundId:          roundID,
+				LatestSubmission: big.NewInt(answer),
+				EligibleToSubmit: true,
+				AvailableFunds:   availableFunds,
+				PaymentAmount:    paymentAmount,
+				OracleCount:      1,
+			}, nil).
+			Once()
+		orm.
+			On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(roundID)).
+			Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
+				Aggregator: spec.ContractAddress,
+				RoundID:    roundID,
+			}, nil).Once()
+		pipelineRunner.
+			On("ExecuteAndInsertNewRun", context.Background(), pipelineSpec, l).
+			Return(int64(1), pipeline.FinalResult{
+				Values: []interface{}{decimal.NewFromInt(answer)},
+				Errors: []error{nil},
+			}, nil).Once()
+		fluxAggregator.On("Submit",
+			&bind.TransactOpts{
+				// From: nodeAddr,
+			},
+			big.NewInt(roundID),
+			big.NewInt(answer),
+		).Return(&types.Transaction{}, nil).Once()
+		orm.
+			On("UpdateFluxMonitorRoundStats",
+				spec.ContractAddress,
+				uint32(roundID),
+				int64(1),
+			).
+			Return(nil).
+			Once()
+
+		fluxAggregator.On("Address").Return(spec.ContractAddress)
+		fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
+		fm.SetOracleAddress()
+		fm.ExportedPollIfEligible(0, 0)
+
+		// Now fire off the NewRound log and ensure it does not respond this time
+		orm.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(roundID), nil)
+		orm.
+			On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(roundID)).
+			Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
+				PipelineRunID:  corenull.NewInt64(int64(1), true),
+				Aggregator:     spec.ContractAddress,
+				RoundID:        roundID,
+				NumSubmissions: 1,
+			}, nil).Once()
+		pipelineORM.On("FindRun", int64(1)).Return(pipeline.Run{}, nil)
+
+		fm.ExportedRespondToNewRoundLog(&flux_aggregator_wrapper.FluxAggregatorNewRound{
+			RoundId:   big.NewInt(roundID),
+			StartedAt: big.NewInt(0),
+		})
+
+		fluxAggregator.AssertExpectations(t)
+		logBroadcaster.AssertExpectations(t)
+		keyStore.AssertExpectations(t)
+		orm.AssertExpectations(t)
+		pipelineRunner.AssertExpectations(t)
+	})
 }
