@@ -4,7 +4,6 @@ import (
 	"math/big"
 
 	"github.com/smartcontractkit/chainlink/core/assets"
-	"github.com/smartcontractkit/chainlink/core/internal/gethwrappers/generated/flux_aggregator_wrapper"
 )
 
 // MinFundedRounds defines the minimum number of rounds that needs to be paid
@@ -30,12 +29,12 @@ func NewPaymentChecker(minContractPayment, minJobPayment *assets.Link) *PaymentC
 // SufficientFunds checks if the contract has sufficient funding to pay all the
 // oracles on a contract for a minimum number of rounds, based on the payment
 // amount in the contract
-func (c *PaymentChecker) SufficientFunds(state flux_aggregator_wrapper.OracleRoundState) bool {
-	min := big.NewInt(int64(state.OracleCount))
+func (c *PaymentChecker) SufficientFunds(availableFunds *big.Int, paymentAmount *big.Int, oracleCount uint8) bool {
+	min := big.NewInt(int64(oracleCount))
 	min = min.Mul(min, big.NewInt(MinFundedRounds))
-	min = min.Mul(min, state.PaymentAmount)
+	min = min.Mul(min, paymentAmount)
 
-	return state.AvailableFunds.Cmp(min) >= 0
+	return availableFunds.Cmp(min) >= 0
 }
 
 // SufficientPayment checks if the available payment is enough to submit an

@@ -11,14 +11,14 @@ import (
 // function to send to the BPTXM
 type FluxMonitorEthClient struct {
 	eth.Client
-	store Store
+	orm ORM
 }
 
 // NewFluxMonitorEthClient constructs a new FluxMonitorEthClient
-func NewFluxMonitorEthClient(ethClient eth.Client, store Store) *FluxMonitorEthClient {
+func NewFluxMonitorEthClient(ethClient eth.Client, orm ORM) *FluxMonitorEthClient {
 	return &FluxMonitorEthClient{
 		Client: ethClient,
-		store:  store,
+		orm:    orm,
 	}
 }
 

@@ -1,70 +1,39 @@
 package fluxmonitorv2
 
 import (
-	"context"
 	"encoding/hex"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/pkg/errors"
 	"github.com/smartcontractkit/chainlink/core/logger"
-	"github.com/smartcontractkit/chainlink/core/services/job"
-	"github.com/smartcontractkit/chainlink/core/services/pipeline"
-	corestore "github.com/smartcontractkit/chainlink/core/store"
 	"gorm.io/gorm"
 )
 
-//go:generate mockery --name Store --output ./mocks/ --case=underscore
+//go:generate mockery --name ORM --output ./mocks/ --case=underscore
 
-type Store interface {
-	RecordError(jobID int32, description string)
-	KeyStoreAccounts() []accounts.Account
+// ORM defines an interface for database commands related to Flux Monitor v2
+type ORM interface {
 	MostRecentFluxMonitorRoundID(aggregator common.Address) (uint32, error)
 	DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error
 	FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (FluxMonitorRoundStatsV2, error)
 	UpdateFluxMonitorRoundStats(aggregator common.Address, roundID uint32, runID int64) error
-	FindPipelineRun(runID int64) (pipeline.Run, error)
-	GetRoundRobinAddress() (common.Address, error)
 }
 
-type store struct {
-	db          *gorm.DB
-	cstore      *corestore.Store
-	jobORM      job.ORM
-	pipelineORM pipeline.ORM
+type orm struct {
+	db *gorm.DB
 }
 
-func NewStore(
-	db *gorm.DB,
-	cstore *corestore.Store,
-	jobORM job.ORM,
-	pipelineORM pipeline.ORM,
-) *store {
-	return &store{
-		db,
-		cstore,
-		jobORM,
-		pipelineORM,
-	}
-}
-
-// RecordError records an job error in the DB. wraps the jobORM RecordError
-// method, supplying an empty context.
-func (s *store) RecordError(jobID int32, description string) {
-	s.jobORM.RecordError(context.Background(), jobID, description)
-}
-
-// KeyStoreAccounts gets the node's keys
-func (s *store) KeyStoreAccounts() []accounts.Account {
-	return s.cstore.KeyStore.Accounts()
+// NewORM initializes a new ORM
+func NewORM(db *gorm.DB) *orm {
+	return &orm{db}
 }
 
 // MostRecentFluxMonitorRoundID finds roundID of the most recent round that the
 // provided oracle address submitted to
-func (s *store) MostRecentFluxMonitorRoundID(aggregator common.Address) (uint32, error) {
+func (o *orm) MostRecentFluxMonitorRoundID(aggregator common.Address) (uint32, error) {
 	var stats FluxMonitorRoundStatsV2
-	err := s.db.
+	err := o.db.
 		Order("round_id DESC").
 		First(&stats, "aggregator = ?", aggregator).
 		Error
@@ -78,8 +47,8 @@ func (s *store) MostRecentFluxMonitorRoundID(aggregator common.Address) (uint32,
 // DeleteFluxMonitorRoundsBackThrough deletes all the RoundStat records for a
 // given oracle address starting from the most recent round back through the
 // given round
-func (s *store) DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error {
-	return s.db.Exec(`
+func (o *orm) DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error {
+	return o.db.Exec(`
         DELETE FROM flux_monitor_round_stats_v2
         WHERE aggregator = ?
           AND round_id >= ?
@@ -88,9 +57,9 @@ func (s *store) DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, ro
 
 // FindOrCreateFluxMonitorRoundStats find the round stats record for a given
 // oracle on a given round, or creates it if no record exists
-func (s *store) FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (FluxMonitorRoundStatsV2, error) {
+func (o *orm) FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (FluxMonitorRoundStatsV2, error) {
 	var stats FluxMonitorRoundStatsV2
-	err := s.db.FirstOrCreate(&stats,
+	err := o.db.FirstOrCreate(&stats,
 		FluxMonitorRoundStatsV2{Aggregator: aggregator, RoundID: roundID},
 	).Error
 
@@ -99,8 +68,8 @@ func (s *store) FindOrCreateFluxMonitorRoundStats(aggregator common.Address, rou
 
 // UpdateFluxMonitorRoundStats trys to create a RoundStat record for the given oracle
 // at the given round. If one already exists, it increments the num_submissions column.
-func (s *store) UpdateFluxMonitorRoundStats(aggregator common.Address, roundID uint32, runID int64) error {
-	return s.db.Exec(`
+func (o *orm) UpdateFluxMonitorRoundStats(aggregator common.Address, roundID uint32, runID int64) error {
+	return o.db.Exec(`
         INSERT INTO flux_monitor_round_stats_v2 (
             aggregator, round_id, pipeline_run_id, num_new_round_logs, num_submissions
         ) VALUES (
@@ -113,27 +82,22 @@ func (s *store) UpdateFluxMonitorRoundStats(aggregator common.Address, roundID u
 }
 
 // CountFluxMonitorRoundStats counts the total number of records
-func (s *store) CountFluxMonitorRoundStats() (int, error) {
+func (o *orm) CountFluxMonitorRoundStats() (int, error) {
 	var count int64
-	err := s.db.Table("flux_monitor_round_stats_v2").Count(&count).Error
+	err := o.db.Table("flux_monitor_round_stats_v2").Count(&count).Error
 
 	return int(count), err
 }
 
-// FindPipelineRun retrieves a pipeline.Run by id.
-func (s *store) FindPipelineRun(runID int64) (pipeline.Run, error) {
-	return s.pipelineORM.FindRun(runID)
-}
-
 // CreateEthTransaction creates an ethereum transaction for the BPTXM to pick up
-func (s *store) CreateEthTransaction(
+func (o *orm) CreateEthTransaction(
 	fromAddress common.Address,
 	toAddress common.Address,
 	payload []byte,
 	value *big.Int,
 	gasLimit uint64,
 ) error {
-	dbtx := s.db.Exec(`
+	dbtx := o.db.Exec(`
 INSERT INTO eth_txes (from_address, to_address, encoded_payload, value, gas_limit, state, created_at)
 SELECT $1,$2,$3,$4,$5,'unstarted',NOW()
 WHERE NOT EXISTS (
@@ -162,10 +126,4 @@ WHERE NOT EXISTS (
 	}
 
 	return nil
-}
-
-// GetRoundRobinAddress queries the database for the address of a random
-// ethereum key derived from the id.
-func (s *store) GetRoundRobinAddress() (common.Address, error) {
-	return s.cstore.GetRoundRobinAddress()
 }

@@ -55,17 +55,16 @@ var (
 
 func NewSpecification() fluxmonitorv2.Specification {
 	return fluxmonitorv2.Specification{
-		ID:                  "1",
-		JobID:               1,
-		ContractAddress:     cltest.NewAddress(),
-		Precision:           2,
-		Threshold:           0.5,
-		AbsoluteThreshold:   0.01,
-		PollTimerPeriod:     time.Minute,
-		PollTimerDisabled:   false,
-		IdleTimerPeriod:     time.Minute,
-		IdleTimerDisabled:   false,
-		TransmissionAddress: transmissionAddress,
+		ID:                "1",
+		JobID:             1,
+		ContractAddress:   cltest.NewAddress(),
+		Precision:         2,
+		Threshold:         0.5,
+		AbsoluteThreshold: 0.01,
+		PollTimerPeriod:   time.Minute,
+		PollTimerDisabled: false,
+		IdleTimerPeriod:   time.Minute,
+		IdleTimerDisabled: false,
 	}
 }
 
@@ -92,28 +91,11 @@ answer1 [type=median index=0];
 func NewPipelineRun() fluxmonitorv2.PipelineRun {
 	jobID := int32(1)
 	pipelineRunner := new(pipelinemocks.Runner)
-	pipelineSpec := pipeline.Spec{
-		ID: 1,
-		DotDagSource: `
-// data source 1
-ds1 [type=http method=GET url="https://pricesource1.com" requestData="{\\"coin\\": \\"ETH\\", \\"market\\": \\"USD\\"}"];
-ds1_parse [type=jsonparse path="latest"];
-
-// data source 2
-ds2 [type=http method=GET url="https://pricesource1.com" requestData="{\\"coin\\": \\"ETH\\", \\"market\\": \\"USD\\"}"];
-ds2_parse [type=jsonparse path="latest"];
-
-ds1 -> ds1_parse -> answer1;
-ds2 -> ds2_parse -> answer1;
-
-answer1 [type=median index=0];					
-		`,
-	}
 	l := *logger.Default
 
 	return fluxmonitorv2.NewPipelineRun(
 		pipelineRunner,
-		pipelineSpec,
+		NewPipelineSpec(),
 		jobID,
 		l,
 	)
@@ -196,7 +178,10 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 			var (
 				fluxAggregator = new(mocks.FluxAggregator)
 				logBroadcaster = new(logmocks.Broadcaster)
-				fmstore        = new(fmmocks.Store)
+				orm            = new(fmmocks.ORM)
+				jobORM         = new(jobmocks.ORM)
+				pipelineORM    = new(pipelinemocks.ORM)
+				keyStore       = new(fmmocks.KeyStoreInterface)
 				spec           = fluxmonitorv2.Specification{
 					ID:                "1",
 					JobID:             1,
@@ -210,6 +195,13 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 					IdleTimerDisabled: false,
 				}
 			)
+			t.Cleanup(func() {
+				fluxAggregator.AssertExpectations(t)
+				orm.AssertExpectations(t)
+				keyStore.AssertExpectations(t)
+			})
+
+			keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
 
 			// Setup Answers
 			answers := undeviatedAnswers
@@ -237,7 +229,7 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 					}
 				}
 
-				fmstore.
+				orm.
 					On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(reportableRoundID)).
 					Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
 						Aggregator:     spec.ContractAddress,
@@ -246,12 +238,12 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 						NumSubmissions: 1,
 					}, nil)
 
-				fmstore.
-					On("FindPipelineRun", run.ID).
+				pipelineORM.
+					On("FindRun", run.ID).
 					Return(run, nil)
 			} else {
 				if tc.connected {
-					fmstore.
+					orm.
 						On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(reportableRoundID)).
 						Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
 							Aggregator: spec.ContractAddress,
@@ -306,15 +298,17 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 			}
 
 			if tc.expectedToSubmit {
+				// orm.On("GetRoundRobinAddress").Return(nodeAddr, nil)
+
 				fluxAggregator.On("Submit",
 					&bind.TransactOpts{
-						From: transmissionAddress,
+						// From: nodeAddr,
 					},
 					big.NewInt(reportableRoundID),
 					big.NewInt(answers.polledAnswer),
 				).Return(&types.Transaction{}, nil)
 
-				fmstore.
+				orm.
 					On("UpdateFluxMonitorRoundStats",
 						spec.ContractAddress,
 						uint32(reportableRoundID),
@@ -325,11 +319,14 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				pipelineRun,
-				fmstore,
+				orm,
+				jobORM,
+				pipelineORM,
+				keyStore,
 				fluxmonitorv2.NewPollTicker(time.Minute, false),
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
-				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
@@ -347,13 +344,9 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 
 			oracles := []common.Address{nodeAddr, cltest.NewAddress()}
 			fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
-			fmstore.On("KeyStoreAccounts").Return([]accounts.Account{{Address: nodeAddr}})
 			fm.SetOracleAddress()
 
 			fm.ExportedPollIfEligible(thresholds.rel, thresholds.abs)
-
-			fluxAggregator.AssertExpectations(t)
-			fmstore.AssertExpectations(t)
 		})
 	}
 }
@@ -370,7 +363,10 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 		fluxAggregator = new(mocks.FluxAggregator)
 		logBroadcaster = new(logmocks.Broadcaster)
 		pipelineRunner = new(pipelinemocks.Runner)
-		fmstore        = new(fmmocks.Store)
+		orm            = new(fmmocks.ORM)
+		jobORM         = new(jobmocks.ORM)
+		pipelineORM    = new(pipelinemocks.ORM)
+		keyStore       = new(fmmocks.KeyStoreInterface)
 		spec           = NewSpecification()
 		pipelineSpec   = NewPipelineSpec()
 		l              = *logger.Default
@@ -383,15 +379,16 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 		roundState = flux_aggregator_wrapper.OracleRoundState{}
 	)
 
-	fmstore.
-		On("KeyStoreAccounts").
-		Return([]accounts.Account{{Address: nodeAddr}}).
-		Once()
-	fmstore.
+	keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
+
+	jobORM.
 		On("RecordError",
+			context.Background(),
 			spec.JobID,
 			"Unable to call roundState method on provided contract. Check contract address.",
 		).Once()
+	// orm.On("GetRoundRobinAddress").Return(nodeAddr, nil)
+	// orm.On("GetRoundRobinAddress").Return(nodeAddr, nil)
 
 	fluxAggregator.
 		On("OracleRoundState", nilOpts, nodeAddr, mock.Anything).
@@ -400,11 +397,14 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		pipelineRun,
-		fmstore,
+		orm,
+		jobORM,
+		pipelineORM,
+		keyStore,
 		fluxmonitorv2.NewPollTicker(time.Minute, false),
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
-		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
@@ -416,6 +416,8 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	// orm.On("GetRoundRobinAddress").Return(nodeAddr, nil)
+
 	fm.OnConnect()
 
 	fluxAggregator.On("GetOracles", nilOpts).Return(oracles, nil)
@@ -424,7 +426,8 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 	fm.ExportedPollIfEligible(1, 1)
 
 	fluxAggregator.AssertExpectations(t)
-	fmstore.AssertExpectations(t)
+	orm.AssertExpectations(t)
+	keyStore.AssertExpectations(t)
 }
 
 func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
@@ -438,12 +441,17 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		fetchedValue = 100
 	)
 
-	fmstore := new(fmmocks.Store)
-	spec := NewSpecification()
+	var (
+		orm         = new(fmmocks.ORM)
+		jobORM      = new(jobmocks.ORM)
+		pipelineORM = new(pipelinemocks.ORM)
+		keyStore    = new(fmmocks.KeyStoreInterface)
+		spec        = NewSpecification()
+	)
 	spec.PollTimerDisabled = true
 	spec.IdleTimerDisabled = true
 
-	fmstore.On("KeyStoreAccounts").Return([]accounts.Account{{Address: nodeAddr}})
+	keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
 
 	// Test helpers
 	var (
@@ -491,12 +499,12 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 	logBroadcaster.On("Register", mock.Anything, mock.Anything).Return(true)
 	logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
 
-	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(1), nil)
-	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(3), nil)
-	fmstore.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(4), nil)
+	orm.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(1), nil)
+	orm.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(3), nil)
+	orm.On("MostRecentFluxMonitorRoundID", spec.ContractAddress).Return(uint32(4), nil)
 
 	// Round 1
-	fmstore.
+	orm.
 		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(1)).
 		Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
 			Aggregator: spec.ContractAddress,
@@ -510,12 +518,12 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		}, nil)
 	fluxAggregator.On("Submit",
 		&bind.TransactOpts{
-			From: transmissionAddress,
+			// From: transmissionAddress,
 		},
 		big.NewInt(1),
 		big.NewInt(fetchedValue),
 	).Return(&types.Transaction{}, nil)
-	fmstore.
+	orm.
 		On("UpdateFluxMonitorRoundStats",
 			spec.ContractAddress,
 			uint32(1),
@@ -524,7 +532,7 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		Return(nil).Once()
 
 	// Round 3
-	fmstore.
+	orm.
 		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(3)).
 		Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
 			Aggregator: spec.ContractAddress,
@@ -538,12 +546,12 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		}, nil)
 	fluxAggregator.On("Submit",
 		&bind.TransactOpts{
-			From: transmissionAddress,
+			// From: transmissionAddress,
 		},
 		big.NewInt(3),
 		big.NewInt(fetchedValue),
 	).Return(&types.Transaction{}, nil)
-	fmstore.
+	orm.
 		On("UpdateFluxMonitorRoundStats",
 			spec.ContractAddress,
 			uint32(3),
@@ -553,7 +561,7 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		Return(nil).Once()
 
 	// Round 4
-	fmstore.
+	orm.
 		On("FindOrCreateFluxMonitorRoundStats", spec.ContractAddress, uint32(4)).
 		Return(fluxmonitorv2.FluxMonitorRoundStatsV2{
 			Aggregator: spec.ContractAddress,
@@ -567,12 +575,12 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		}, nil)
 	fluxAggregator.On("Submit",
 		&bind.TransactOpts{
-			From: transmissionAddress,
+			// From: transmissionAddress,
 		},
 		big.NewInt(4),
 		big.NewInt(fetchedValue),
 	).Return(&types.Transaction{}, nil)
-	fmstore.
+	orm.
 		On("UpdateFluxMonitorRoundStats",
 			spec.ContractAddress,
 			uint32(4),
@@ -584,11 +592,14 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 
 	checker, err := fluxmonitorv2.NewFluxMonitor(
 		pipelineRun,
-		fmstore,
+		orm,
+		jobORM,
+		pipelineORM,
+		keyStore,
 		fluxmonitorv2.NewPollTicker(time.Minute, true),
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
-		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
@@ -624,7 +635,8 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 
 	fluxAggregator.AssertExpectations(t)
 	pipelineRunner.AssertExpectations(t)
-	fmstore.AssertExpectations(t)
+	orm.AssertExpectations(t)
+	keyStore.AssertExpectations(t)
 }
 
 func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
@@ -649,17 +661,22 @@ func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
 			_, nodeAddr := cltest.MustAddRandomKeyToKeystore(t, store)
 			oracles := []common.Address{nodeAddr, cltest.NewAddress()}
 
-			fluxAggregator := new(mocks.FluxAggregator)
-			logBroadcast := new(logmocks.Broadcast)
-			logBroadcaster := new(logmocks.Broadcaster)
-
-			jobORM := new(jobmocks.ORM)
-			pipelineORM := new(pipelinemocks.ORM)
-			spec := NewSpecification()
-			pollTicker := fluxmonitorv2.NewPollTicker(time.Minute, true)
+			var (
+				fluxAggregator = new(mocks.FluxAggregator)
+				logBroadcast   = new(logmocks.Broadcast)
+				logBroadcaster = new(logmocks.Broadcaster)
+				jobORM         = new(jobmocks.ORM)
+				pipelineORM    = new(pipelinemocks.ORM)
+				keyStore       = new(fmmocks.KeyStoreInterface)
+				spec           = NewSpecification()
+				pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, true)
+				orm            = fluxmonitorv2.NewORM(store.DB)
+			)
 			spec.PollTimerDisabled = true
 			spec.IdleTimerDisabled = tc.idleTimerDisabled
 			spec.IdleTimerPeriod = tc.idleDuration
+
+			keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
 
 			const fetchedAnswer = 100
 			answerBigInt := big.NewInt(fetchedAnswer * int64(math.Pow10(int(spec.Precision))))
@@ -685,12 +702,14 @@ func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-
-				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+				orm,
+				jobORM,
+				pipelineORM,
+				keyStore,
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
-				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
@@ -739,6 +758,7 @@ func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
 			}
 
 			fluxAggregator.AssertExpectations(t)
+			keyStore.AssertExpectations(t)
 		})
 	}
 }
@@ -752,14 +772,23 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutAtZero(t *testing.T) {
 	_, nodeAddr := cltest.MustAddRandomKeyToKeystore(t, store)
 	oracles := []common.Address{nodeAddr, cltest.NewAddress()}
 
-	fluxAggregator := new(mocks.FluxAggregator)
-	logBroadcaster := new(logmocks.Broadcaster)
-	jobORM := new(jobmocks.ORM)
-	pipelineORM := new(pipelinemocks.ORM)
-	spec := NewSpecification()
-	pollTicker := fluxmonitorv2.NewPollTicker(time.Minute, true)
+	var (
+		fluxAggregator = new(mocks.FluxAggregator)
+		logBroadcaster = new(logmocks.Broadcaster)
+		orm            = fluxmonitorv2.NewORM(store.DB)
+		jobORM         = new(jobmocks.ORM)
+		pipelineORM    = new(pipelinemocks.ORM)
+		keyStore       = new(fmmocks.KeyStoreInterface)
+		spec           = NewSpecification()
+		pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, true)
+	)
 	spec.PollTimerDisabled = true
 	spec.IdleTimerDisabled = true
+
+	keyStore.
+		On("Accounts").
+		Return([]accounts.Account{{Address: nodeAddr}}).
+		Twice() // Once called from the test, once during start
 
 	ch := make(chan struct{})
 
@@ -784,11 +813,14 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutAtZero(t *testing.T) {
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+		orm,
+		jobORM,
+		pipelineORM,
+		keyStore,
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
-		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
@@ -812,6 +844,7 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutAtZero(t *testing.T) {
 	fm.Close()
 
 	fluxAggregator.AssertExpectations(t)
+	keyStore.AssertExpectations(t)
 }
 
 func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) {
@@ -821,10 +854,11 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 	_, nodeAddr := cltest.MustAddRandomKeyToKeystore(t, store)
 	oracles := []common.Address{nodeAddr, cltest.NewAddress()}
 
-	logBroadcaster := new(logmocks.Broadcaster)
-	jobORM := new(jobmocks.ORM)
-	pipelineORM := new(pipelinemocks.ORM)
-	spec := NewSpecification()
+	var (
+		logBroadcaster = new(logmocks.Broadcaster)
+		spec           = NewSpecification()
+	)
+
 	spec.PollTimerDisabled = true
 	spec.IdleTimerDisabled = true
 
@@ -846,7 +880,13 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 			var (
 				pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, true)
 				fluxAggregator = new(mocks.FluxAggregator)
+				jobORM         = new(jobmocks.ORM)
+				orm            = fluxmonitorv2.NewORM(store.DB)
+				pipelineORM    = new(pipelinemocks.ORM)
+				keyStore       = new(fmmocks.KeyStoreInterface)
 			)
+
+			keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
 
 			logBroadcaster.On("Register", mock.Anything, mock.Anything).Return(true)
 			logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
@@ -873,11 +913,14 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+				orm,
+				jobORM,
+				pipelineORM,
+				keyStore,
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
-				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
@@ -900,6 +943,7 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 
 			fm.Close()
 			fluxAggregator.AssertExpectations(t)
+			keyStore.AssertExpectations(t)
 		})
 	}
 }
@@ -911,10 +955,10 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 	_, nodeAddr := cltest.MustAddRandomKeyToKeystore(t, store)
 	oracles := []common.Address{nodeAddr, cltest.NewAddress()}
 
-	logBroadcaster := new(logmocks.Broadcaster)
-	jobORM := new(jobmocks.ORM)
-	pipelineORM := new(pipelinemocks.ORM)
-	spec := NewSpecification()
+	var (
+		logBroadcaster = new(logmocks.Broadcaster)
+		spec           = NewSpecification()
+	)
 	spec.PollTimerDisabled = true
 	spec.IdleTimerDisabled = false
 
@@ -941,7 +985,13 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 			var (
 				pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, true)
 				fluxAggregator = new(mocks.FluxAggregator)
+				orm            = fluxmonitorv2.NewORM(store.DB)
+				jobORM         = new(jobmocks.ORM)
+				pipelineORM    = new(pipelinemocks.ORM)
+				keyStore       = new(fmmocks.KeyStoreInterface)
 			)
+
+			keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
 
 			logBroadcaster.On("Register", mock.Anything, mock.Anything).Return(true)
 			logBroadcaster.On("Unregister", mock.Anything, mock.Anything)
@@ -969,11 +1019,14 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+				orm,
+				jobORM,
+				pipelineORM,
+				keyStore,
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
-				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
@@ -995,7 +1048,9 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 			}
 
 			fm.Close()
+
 			fluxAggregator.AssertExpectations(t)
+			keyStore.AssertExpectations(t)
 		})
 	}
 }
@@ -1011,12 +1066,16 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutNotZero(t *testing.T) {
 		fluxAggregator = new(mocks.FluxAggregator)
 		logBroadcaster = new(logmocks.Broadcaster)
 		jobORM         = new(jobmocks.ORM)
+		orm            = fluxmonitorv2.NewORM(store.DB)
 		pipelineORM    = new(pipelinemocks.ORM)
 		spec           = NewSpecification()
+		keyStore       = new(fmmocks.KeyStoreInterface)
 		pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, true)
 	)
 	spec.PollTimerDisabled = true
 	spec.IdleTimerDisabled = true
+
+	keyStore.On("Accounts").Return([]accounts.Account{{Address: nodeAddr}}).Once()
 
 	const fetchedAnswer = 100
 	answerBigInt := big.NewInt(fetchedAnswer * int64(math.Pow10(int(spec.Precision))))
@@ -1061,11 +1120,14 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutNotZero(t *testing.T) {
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+		orm,
+		jobORM,
+		pipelineORM,
+		keyStore,
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
-		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
@@ -1093,143 +1155,7 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutNotZero(t *testing.T) {
 	fm.Close()
 
 	fluxAggregator.AssertExpectations(t)
-}
-
-func TestFluxMonitor_SufficientFunds(t *testing.T) {
-	store, cleanup := cltest.NewStore(t)
-	defer cleanup()
-
-	var (
-		fluxAggregator = new(mocks.FluxAggregator)
-		logBroadcaster = new(logmocks.Broadcaster)
-		jobORM         = new(jobmocks.ORM)
-		pipelineORM    = new(pipelinemocks.ORM)
-		spec           = NewSpecification()
-		pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, false)
-	)
-
-	checker, err := fluxmonitorv2.NewFluxMonitor(
-		NewPipelineRun(),
-		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
-		pollTicker,
-		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
-		spec.ContractAddress,
-		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
-		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
-		fluxmonitorv2.Flags{},
-		fluxAggregator,
-		logBroadcaster,
-		spec,
-		func() {},
-		big.NewInt(0),
-		big.NewInt(100000000000),
-	)
-	require.NoError(t, err)
-
-	payment := 100
-	rounds := 3
-	oracleCount := 21
-	min := payment * rounds * oracleCount
-
-	testCases := []struct {
-		name  string
-		funds int
-		want  bool
-	}{
-		{"above minimum", min + 1, true},
-		{"equal to minimum", min, true},
-		{"below minimum", min - 1, false},
-	}
-
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			state := flux_aggregator_wrapper.OracleRoundState{
-				AvailableFunds: big.NewInt(int64(tc.funds)),
-				PaymentAmount:  big.NewInt(int64(payment)),
-				OracleCount:    uint8(oracleCount),
-			}
-			assert.Equal(t, tc.want, checker.ExportedSufficientFunds(state))
-		})
-	}
-}
-
-func TestFluxMonitor_SufficientPayment(t *testing.T) {
-	store, cleanup := cltest.NewStore(t)
-	defer cleanup()
-
-	var (
-		fluxAggregator = new(mocks.FluxAggregator)
-		logBroadcaster = new(logmocks.Broadcaster)
-		jobORM         = new(jobmocks.ORM)
-		pipelineORM    = new(pipelinemocks.ORM)
-		spec           = NewSpecification()
-		pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, false)
-	)
-
-	var payment int64 = 10
-	var eq = payment
-	var gt int64 = payment + 1
-	var lt int64 = payment - 1
-
-	tests := []struct {
-		name               string
-		minContractPayment int64
-		minJobPayment      interface{} // nil or int64
-		want               bool
-	}{
-		{"payment above min contract payment, no min job payment", lt, nil, true},
-		{"payment equal to min contract payment, no min job payment", eq, nil, true},
-		{"payment below min contract payment, no min job payment", gt, nil, false},
-
-		{"payment above min contract payment, above min job payment", lt, lt, true},
-		{"payment equal to min contract payment, above min job payment", eq, lt, true},
-		{"payment below min contract payment, above min job payment", gt, lt, false},
-
-		{"payment above min contract payment, equal to min job payment", lt, eq, true},
-		{"payment equal to min contract payment, equal to min job payment", eq, eq, true},
-		{"payment below min contract payment, equal to min job payment", gt, eq, false},
-
-		{"payment above minimum contract payment, below min job payment", lt, gt, false},
-		{"payment equal to minimum contract payment, below min job payment", eq, gt, false},
-		{"payment below minimum contract payment, below min job payment", gt, gt, false},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			var minJobPayment *assets.Link
-
-			if tc.minJobPayment != nil {
-				mjb := assets.Link(*big.NewInt(tc.minJobPayment.(int64)))
-				minJobPayment = &mjb
-			}
-
-			fm, err := fluxmonitorv2.NewFluxMonitor(
-				NewPipelineRun(),
-				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
-				pollTicker,
-				fluxmonitorv2.NewPaymentChecker(assets.NewLink(tc.minContractPayment), minJobPayment),
-				spec.ContractAddress,
-				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
-				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
-				fluxmonitorv2.Flags{},
-				fluxAggregator,
-				logBroadcaster,
-				spec,
-				func() {},
-				big.NewInt(0),
-				big.NewInt(100000000000),
-			)
-			require.NoError(t, err)
-
-			assert.Equal(t, tc.want, fm.ExportedSufficientPayment(big.NewInt(payment)))
-		})
-	}
+	keyStore.AssertExpectations(t)
 }
 
 func TestFluxMonitor_IsFlagLowered(t *testing.T) {
@@ -1251,18 +1177,17 @@ func TestFluxMonitor_IsFlagLowered(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			store, cleanup := cltest.NewStore(t)
-			defer cleanup()
-
 			var (
 				fluxAggregator = new(mocks.FluxAggregator)
 				logBroadcaster = new(logmocks.Broadcaster)
 				flagsContract  = new(mocks.Flags)
 				flags          = fluxmonitorv2.Flags{FlagsInterface: flagsContract}
 				jobORM         = new(jobmocks.ORM)
+				orm            = new(fmmocks.ORM)
 				pipelineORM    = new(pipelinemocks.ORM)
 				pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, false)
 				spec           = NewSpecification()
+				keyStore       = new(fmmocks.KeyStoreInterface)
 			)
 
 			flagsContract.On("GetFlags", mock.Anything, mock.Anything).
@@ -1273,11 +1198,14 @@ func TestFluxMonitor_IsFlagLowered(t *testing.T) {
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+				orm,
+				jobORM,
+				pipelineORM,
+				keyStore,
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
-				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				flags,
 				fluxAggregator,
@@ -1301,9 +1229,6 @@ func TestFluxMonitor_IsFlagLowered(t *testing.T) {
 func TestFluxMonitor_HandlesNilLogs(t *testing.T) {
 	t.Parallel()
 
-	store, cleanup := cltest.NewStore(t)
-	defer cleanup()
-
 	var (
 		fluxAggregator = new(mocks.FluxAggregator)
 		logBroadcaster = new(logmocks.Broadcaster)
@@ -1311,15 +1236,20 @@ func TestFluxMonitor_HandlesNilLogs(t *testing.T) {
 		pipelineORM    = new(pipelinemocks.ORM)
 		spec           = NewSpecification()
 		pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, false)
+		orm            = new(fmmocks.ORM)
+		keyStore       = new(fmmocks.KeyStoreInterface)
 	)
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+		orm,
+		jobORM,
+		pipelineORM,
+		keyStore,
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
-		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
@@ -1350,13 +1280,12 @@ func TestFluxMonitor_HandlesNilLogs(t *testing.T) {
 	assert.NotPanics(t, func() {
 		fm.HandleLog(logBroadcast, nil)
 	})
+
+	logBroadcast.AssertExpectations(t)
 }
 
 func TestFluxMonitor_ConsumeLogBroadcast(t *testing.T) {
 	t.Parallel()
-
-	store, cleanup := cltest.NewStore(t)
-	defer cleanup()
 
 	var (
 		fluxAggregator = new(mocks.FluxAggregator)
@@ -1365,15 +1294,20 @@ func TestFluxMonitor_ConsumeLogBroadcast(t *testing.T) {
 		pipelineORM    = new(pipelinemocks.ORM)
 		spec           = NewSpecification()
 		pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, false)
+		orm            = new(fmmocks.ORM)
+		keyStore       = new(fmmocks.KeyStoreInterface)
 	)
 
 	fm, err := fluxmonitorv2.NewFluxMonitor(
 		NewPipelineRun(),
-		fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+		orm,
+		jobORM,
+		pipelineORM,
+		keyStore,
 		pollTicker,
 		fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 		spec.ContractAddress,
-		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
@@ -1420,9 +1354,6 @@ func TestFluxMonitor_ConsumeLogBroadcast_Error(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			store, cleanup := cltest.NewStore(t)
-			defer cleanup()
-
 			var (
 				fluxAggregator = new(mocks.FluxAggregator)
 				logBroadcaster = new(logmocks.Broadcaster)
@@ -1430,15 +1361,20 @@ func TestFluxMonitor_ConsumeLogBroadcast_Error(t *testing.T) {
 				pipelineORM    = new(pipelinemocks.ORM)
 				spec           = NewSpecification()
 				pollTicker     = fluxmonitorv2.NewPollTicker(time.Minute, false)
+				orm            = new(fmmocks.ORM)
+				keyStore       = new(fmmocks.KeyStoreInterface)
 			)
 
 			fm, err := fluxmonitorv2.NewFluxMonitor(
 				NewPipelineRun(),
-				fluxmonitorv2.NewStore(store.DB, store, jobORM, pipelineORM),
+				orm,
+				jobORM,
+				pipelineORM,
+				keyStore,
 				pollTicker,
 				fluxmonitorv2.NewPaymentChecker(assets.NewLink(1), nil),
 				spec.ContractAddress,
-				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, transmissionAddress),
+				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,

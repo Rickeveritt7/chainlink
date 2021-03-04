@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/smartcontractkit/chainlink/core/assets"
-	"github.com/smartcontractkit/chainlink/core/internal/gethwrappers/generated/flux_aggregator_wrapper"
 	"github.com/smartcontractkit/chainlink/core/services/fluxmonitorv2"
 	"github.com/stretchr/testify/assert"
 )
@@ -34,12 +33,11 @@ func TestPaymentChecker_SufficientFunds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			state := flux_aggregator_wrapper.OracleRoundState{
-				AvailableFunds: big.NewInt(int64(tc.funds)),
-				PaymentAmount:  big.NewInt(int64(payment)),
-				OracleCount:    uint8(oracleCount),
-			}
-			assert.Equal(t, tc.want, checker.SufficientFunds(state))
+			assert.Equal(t, tc.want, checker.SufficientFunds(
+				big.NewInt(int64(tc.funds)),
+				big.NewInt(int64(payment)),
+				uint8(oracleCount),
+			))
 		})
 	}
 }

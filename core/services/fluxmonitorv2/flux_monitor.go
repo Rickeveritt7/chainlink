@@ -1,6 +1,7 @@
 package fluxmonitorv2
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 	"reflect"
@@ -15,6 +16,7 @@ import (
 	"github.com/smartcontractkit/chainlink/core/logger"
 	"github.com/smartcontractkit/chainlink/core/services/eth"
 	"github.com/smartcontractkit/chainlink/core/services/fluxmonitor/promfm"
+	"github.com/smartcontractkit/chainlink/core/services/job"
 	"github.com/smartcontractkit/chainlink/core/services/log"
 	"github.com/smartcontractkit/chainlink/core/services/pipeline"
 	"github.com/smartcontractkit/chainlink/core/store/models"
@@ -42,14 +44,11 @@ type Specification struct {
 	MinJobPayment     *assets.Link
 }
 
-// FluxMonitorFactory holds the New method needed to create a new instance
-// of a FluxMonitor.
-type FluxMonitorFactory interface {
-	New(Specification, PipelineRun, Config) (*FluxMonitor, error)
-}
-
 type fluxMonitorFactory struct {
-	store          Store
+	orm            ORM
+	jobORM         job.ORM
+	pipelineORM    pipeline.ORM
+	keyStore       KeyStoreInterface
 	ethClient      eth.Client
 	logBroadcaster log.Broadcaster
 }
@@ -61,10 +60,7 @@ func (f fluxMonitorFactory) New(
 	pipelineRun PipelineRun,
 	cfg Config,
 ) (*FluxMonitor, error) {
-	// Validate the poll timer
-	if !spec.PollTimerDisabled &&
-		spec.PollTimerPeriod < cfg.MinimumPollingInterval() {
-
+	if validatePollTimer(spec.PollTimerDisabled, cfg.MinimumPollingInterval(), spec.PollTimerPeriod) {
 		return nil, fmt.Errorf(
 			"pollTimerPeriod must be equal or greater than %s",
 			cfg.MinimumPollingInterval(),
@@ -75,13 +71,13 @@ func (f fluxMonitorFactory) New(
 	f.logBroadcaster.AddDependents(1)
 	fluxAggregator, err := flux_aggregator_wrapper.NewFluxAggregator(
 		spec.ContractAddress,
-		NewFluxMonitorEthClient(f.ethClient, &f.store),
+		NewFluxMonitorEthClient(f.ethClient, f.orm),
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	contractSubmitter := NewFluxAggregatorContractSubmitter(fluxAggregator)
+	contractSubmitter := NewFluxAggregatorContractSubmitter(fluxAggregator, f.orm)
 
 	// Set up the contract flags
 	flags, err := NewFlags(cfg.FlagsContractAddress, f.ethClient)
@@ -110,7 +106,10 @@ func (f fluxMonitorFactory) New(
 
 	return NewFluxMonitor(
 		pipelineRun,
-		f.store,
+		f.orm,
+		f.jobORM,
+		f.pipelineORM,
+		f.keyStore,
 		NewPollTicker(spec.PollTimerPeriod, spec.PollTimerDisabled),
 		paymentChecker,
 		spec.ContractAddress,
@@ -131,7 +130,10 @@ type FluxMonitor struct {
 	contractAddress   common.Address
 	oracleAddress     common.Address
 	pipelineRun       PipelineRun
-	store             Store
+	orm               ORM
+	jobORM            job.ORM
+	pipelineORM       pipeline.ORM
+	keyStore          KeyStoreInterface
 	spec              Specification
 	pollTicker        *PollTicker
 	paymentChecker    *PaymentChecker
@@ -161,7 +163,10 @@ type FluxMonitor struct {
 // NewFluxMonitor returns a new instance of PollingDeviationChecker.
 func NewFluxMonitor(
 	pipelineRun PipelineRun,
-	store Store,
+	orm ORM,
+	jobORM job.ORM,
+	pipelineORM pipeline.ORM,
+	keyStore KeyStoreInterface,
 	pollTicker *PollTicker,
 	paymentChecker *PaymentChecker,
 	contractAddress common.Address,
@@ -177,7 +182,10 @@ func NewFluxMonitor(
 ) (*FluxMonitor, error) {
 	fm := &FluxMonitor{
 		pipelineRun:       pipelineRun,
-		store:             store,
+		orm:               orm,
+		jobORM:            jobORM,
+		pipelineORM:       pipelineORM,
+		keyStore:          keyStore,
 		pollTicker:        pollTicker,
 		paymentChecker:    paymentChecker,
 		contractAddress:   contractAddress,
@@ -432,7 +440,7 @@ func (fm *FluxMonitor) SetOracleAddress() error {
 	if err != nil {
 		return errors.Wrap(err, "failed to get list of oracles from FluxAggregator contract")
 	}
-	accounts := fm.store.KeyStoreAccounts()
+	accounts := fm.keyStore.Accounts()
 	for _, acct := range accounts {
 		for _, oracleAddr := range oracleAddrs {
 			if acct.Address == oracleAddr {
@@ -598,14 +606,14 @@ func (fm *FluxMonitor) respondToNewRoundLog(log flux_aggregator_wrapper.FluxAggr
 	// We always want to reset the idle timer upon receiving a NewRound log, so we do it before any `return` statements.
 	fm.resetIdleTimer(log.StartedAt.Uint64())
 
-	mostRecentRoundID, err := fm.store.MostRecentFluxMonitorRoundID(fm.contractAddress)
+	mostRecentRoundID, err := fm.orm.MostRecentFluxMonitorRoundID(fm.contractAddress)
 	if err != nil && err != gorm.ErrRecordNotFound {
 		logger.Errorw(fmt.Sprintf("error fetching Flux Monitor most recent round ID from DB: %v", err), fm.loggerFieldsForNewRound(log)...)
 		return
 	}
 
 	if logRoundID < mostRecentRoundID {
-		err = fm.store.DeleteFluxMonitorRoundsBackThrough(fm.contractAddress, logRoundID)
+		err = fm.orm.DeleteFluxMonitorRoundsBackThrough(fm.contractAddress, logRoundID)
 		if err != nil {
 			logger.Errorw(fmt.Sprintf("error deleting reorged Flux Monitor rounds from DB: %v", err), fm.loggerFieldsForNewRound(log)...)
 			return
@@ -687,25 +695,16 @@ var (
 func (fm *FluxMonitor) checkEligibilityAndAggregatorFunding(roundState flux_aggregator_wrapper.OracleRoundState) error {
 	if !roundState.EligibleToSubmit {
 		return ErrNotEligible
-	} else if !fm.sufficientFunds(roundState) {
+	} else if !fm.paymentChecker.SufficientFunds(
+		roundState.AvailableFunds,
+		roundState.PaymentAmount,
+		roundState.OracleCount,
+	) {
 		return ErrUnderfunded
-	} else if !fm.sufficientPayment(roundState.PaymentAmount) {
+	} else if !fm.paymentChecker.SufficientPayment(roundState.PaymentAmount) {
 		return ErrPaymentTooLow
 	}
 	return nil
-}
-
-// sufficientFunds checks if the contract has sufficient funding to pay all the
-// oracles on a contract for a minimum number of rounds, based on the payment
-// amount in the contract
-func (fm *FluxMonitor) sufficientFunds(state flux_aggregator_wrapper.OracleRoundState) bool {
-	return fm.paymentChecker.SufficientFunds(state)
-}
-
-// sufficientPayment checks if the available payment is enough to submit an answer. It compares
-// the payment amount on chain with the min payment amount listed in the job spec / ENV var.
-func (fm *FluxMonitor) sufficientPayment(payment *big.Int) bool {
-	return fm.paymentChecker.SufficientPayment(payment)
 }
 
 func (fm *FluxMonitor) pollIfEligible(deviationChecker *DeviationChecker) {
@@ -737,7 +736,8 @@ func (fm *FluxMonitor) pollIfEligible(deviationChecker *DeviationChecker) {
 	roundState, err := fm.roundState(0)
 	if err != nil {
 		l.Errorw("unable to determine eligibility to submit from FluxAggregator contract", "err", err)
-		fm.store.RecordError(
+		fm.jobORM.RecordError(
+			context.Background(),
 			fm.spec.JobID,
 			"Unable to call roundState method on provided contract. Check contract address.",
 		)
@@ -775,7 +775,7 @@ func (fm *FluxMonitor) pollIfEligible(deviationChecker *DeviationChecker) {
 	runID, polledAnswer, err := fm.pipelineRun.Execute()
 	if err != nil {
 		l.Errorw("can't fetch answer", "err", err)
-		fm.store.RecordError(fm.spec.JobID, "Error polling")
+		fm.jobORM.RecordError(context.Background(), fm.spec.JobID, "Error polling")
 
 		return
 	}
@@ -830,7 +830,8 @@ func (fm *FluxMonitor) isValidSubmission(l *zap.SugaredLogger, polledAnswer deci
 
 	if polledAnswer.GreaterThan(max) || polledAnswer.LessThan(min) {
 		l.Errorw("polled value is outside acceptable range", "min", min, "max", max, "polled value", polledAnswer)
-		fm.store.RecordError(fm.spec.JobID, "Polled value is outside acceptable range")
+		fm.jobORM.RecordError(context.Background(), fm.spec.JobID, "Polled value is outside acceptable range")
+
 		return false
 	}
 	return true
@@ -961,7 +962,7 @@ func (fm *FluxMonitor) submitTransaction(
 	)
 
 	// Update the flux monitor round stats
-	err := fm.store.UpdateFluxMonitorRoundStats(
+	err := fm.orm.UpdateFluxMonitorRoundStats(
 		fm.contractAddress,
 		roundID,
 		runID,
@@ -1008,21 +1009,12 @@ func (fm *FluxMonitor) loggerFieldsForAnswerUpdated(log flux_aggregator_wrapper.
 	}
 }
 
-// OutsideDeviation checks whether the next price is outside the threshold.
-// If both thresholds are zero (default value), always returns true.
-
-// func OutsideDeviation(curAnswer, nextAnswer decimal.Decimal, thresholds DeviationThresholds) bool {
-// 	checker := NewDeviationChecker(thresholds)
-
-// 	return deviationChecker.OutsideDeviation(curAnswer, nextAnswer)
-// }
-
 func (fm *FluxMonitor) statsAndStatusForRound(roundID uint32) (
 	FluxMonitorRoundStatsV2,
 	pipeline.RunStatus,
 	error,
 ) {
-	roundStats, err := fm.store.FindOrCreateFluxMonitorRoundStats(fm.contractAddress, roundID)
+	roundStats, err := fm.orm.FindOrCreateFluxMonitorRoundStats(fm.contractAddress, roundID)
 	if err != nil {
 		return FluxMonitorRoundStatsV2{}, pipeline.RunStatusUnknown, err
 	}
@@ -1030,7 +1022,7 @@ func (fm *FluxMonitor) statsAndStatusForRound(roundID uint32) (
 	// JobRun will not exist if this is the first time responding to this round
 	var run pipeline.Run
 	if roundStats.PipelineRunID.Valid {
-		run, err = fm.store.FindPipelineRun(roundStats.PipelineRunID.Int64)
+		run, err = fm.pipelineORM.FindRun(roundStats.PipelineRunID.Int64)
 		if err != nil {
 			return FluxMonitorRoundStatsV2{}, pipeline.RunStatusUnknown, err
 		}
