@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	up8 = `
+	up10 = `
 CREATE TABLE flux_monitor_round_stats_v2 (
 	id BIGSERIAL PRIMARY KEY,
 	aggregator bytea NOT NULL,
@@ -17,19 +17,19 @@ CREATE TABLE flux_monitor_round_stats_v2 (
 	CONSTRAINT flux_monitor_round_stats_v2_aggregator_round_id_key UNIQUE (aggregator, round_id)
 );
 `
-	down8 = `
+	down10 = `
 DROP TABLE flux_monitor_round_stats_v2;
 `
 )
 
 func init() {
 	Migrations = append(Migrations, &gormigrate.Migration{
-		ID: "0008_create_flux_monitor_round_stats_v2",
+		ID: "0010_create_flux_monitor_round_stats_v2",
 		Migrate: func(db *gorm.DB) error {
-			return db.Exec(up8).Error
+			return db.Exec(up10).Error
 		},
 		Rollback: func(db *gorm.DB) error {
-			return db.Exec(down8).Error
+			return db.Exec(down10).Error
 		},
 	})
 }
