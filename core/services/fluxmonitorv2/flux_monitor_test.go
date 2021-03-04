@@ -49,8 +49,6 @@ var (
 	freshContractRoundDataResponse = func() (flux_aggregator_wrapper.LatestRoundData, error) {
 		return flux_aggregator_wrapper.LatestRoundData{}, errors.New("unstarted")
 	}
-
-	transmissionAddress = cltest.NewAddress()
 )
 
 func NewSpecification() fluxmonitorv2.Specification {
@@ -328,13 +326,12 @@ func TestFluxMonitor_PollIfEligible(t *testing.T) {
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+				fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
 				logBroadcaster,
 				spec,
 				func() {},
-				big.NewInt(0),
-				big.NewInt(100000000000),
 			)
 			require.NoError(t, err)
 
@@ -406,13 +403,12 @@ func TestFluxMonitor_PollIfEligible_Creates_JobErr(t *testing.T) {
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+		fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
 		logBroadcaster,
 		spec,
 		func() {},
-		big.NewInt(0),
-		big.NewInt(100000000000),
 	)
 	require.NoError(t, err)
 
@@ -601,13 +597,12 @@ func TestPollingDeviationChecker_BuffersLogs(t *testing.T) {
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+		fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
 		logBroadcaster,
 		spec,
 		func() {},
-		big.NewInt(0),
-		big.NewInt(100000000000),
 	)
 	require.NoError(t, err)
 
@@ -711,13 +706,12 @@ func TestFluxMonitor_TriggerIdleTimeThreshold(t *testing.T) {
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+				fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
 				logBroadcaster,
 				spec,
 				func() {},
-				big.NewInt(0),
-				big.NewInt(100000000000),
 			)
 			require.NoError(t, err)
 
@@ -822,13 +816,12 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutAtZero(t *testing.T) {
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+		fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
 		logBroadcaster,
 		spec,
 		func() {},
-		big.NewInt(0),
-		big.NewInt(100000000000),
 	)
 	require.NoError(t, err)
 
@@ -922,13 +915,12 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_RoundTimeout(t *testing.T) 
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+				fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
 				logBroadcaster,
 				spec,
 				func() {},
-				big.NewInt(0),
-				big.NewInt(100000000000),
 			)
 			require.NoError(t, err)
 
@@ -1028,13 +1020,12 @@ func TestFluxMonitor_UsesPreviousRoundStateOnStartup_IdleTimer(t *testing.T) {
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+				fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
 				logBroadcaster,
 				spec,
 				func() {},
-				big.NewInt(0),
-				big.NewInt(100000000000),
 			)
 			require.NoError(t, err)
 
@@ -1129,13 +1120,12 @@ func TestFluxMonitor_RoundTimeoutCausesPoll_timesOutNotZero(t *testing.T) {
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+		fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
 		logBroadcaster,
 		spec,
 		func() {},
-		big.NewInt(0),
-		big.NewInt(100000000000),
 	)
 	require.NoError(t, err)
 
@@ -1207,13 +1197,12 @@ func TestFluxMonitor_IsFlagLowered(t *testing.T) {
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+				fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 				flags,
 				fluxAggregator,
 				logBroadcaster,
 				spec,
 				func() {},
-				big.NewInt(0),
-				big.NewInt(100000000000),
 			)
 			require.NoError(t, err)
 
@@ -1251,13 +1240,12 @@ func TestFluxMonitor_HandlesNilLogs(t *testing.T) {
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+		fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
 		logBroadcaster,
 		spec,
 		func() {},
-		big.NewInt(0),
-		big.NewInt(100000000000),
 	)
 	require.NoError(t, err)
 
@@ -1309,13 +1297,12 @@ func TestFluxMonitor_ConsumeLogBroadcast(t *testing.T) {
 		spec.ContractAddress,
 		fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 		fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+		fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 		fluxmonitorv2.Flags{},
 		fluxAggregator,
 		logBroadcaster,
 		spec,
 		func() {},
-		big.NewInt(0),
-		big.NewInt(100000000000),
 	)
 	require.NoError(t, err)
 
@@ -1376,13 +1363,12 @@ func TestFluxMonitor_ConsumeLogBroadcast_Error(t *testing.T) {
 				spec.ContractAddress,
 				fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm),
 				fluxmonitorv2.NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+				fluxmonitorv2.NewSubmissionChecker(big.NewInt(0), big.NewInt(100000000000), spec.Precision),
 				fluxmonitorv2.Flags{},
 				fluxAggregator,
 				logBroadcaster,
 				spec,
 				func() {},
-				big.NewInt(0),
-				big.NewInt(100000000000),
 			)
 			require.NoError(t, err)
 

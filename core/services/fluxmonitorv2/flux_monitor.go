@@ -115,13 +115,12 @@ func (f fluxMonitorFactory) New(
 		spec.ContractAddress,
 		contractSubmitter,
 		NewDeviationChecker(spec.Threshold, spec.AbsoluteThreshold),
+		NewSubmissionChecker(min, max, spec.Precision),
 		*flags,
 		fluxAggregator,
 		f.logBroadcaster,
 		spec,
 		func() { f.logBroadcaster.DependentReady() },
-		min,
-		max,
 	)
 }
 
@@ -139,6 +138,7 @@ type FluxMonitor struct {
 	paymentChecker    *PaymentChecker
 	contractSubmitter ContractSubmitter
 	deviationChecker  *DeviationChecker
+	submissionChecker *SubmissionChecker
 	flags             Flags
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface
@@ -152,8 +152,6 @@ type FluxMonitor struct {
 	hibernationTimer utils.ResettableTimer
 	idleTimer        utils.ResettableTimer
 	roundTimer       utils.ResettableTimer
-
-	minSubmission, maxSubmission *big.Int
 
 	readyForLogs func()
 	chStop       chan struct{}
@@ -172,13 +170,13 @@ func NewFluxMonitor(
 	contractAddress common.Address,
 	contractSubmitter ContractSubmitter,
 	deviationChecker *DeviationChecker,
+	submissionChecker *SubmissionChecker,
 	flags Flags,
 
 	fluxAggregator flux_aggregator_wrapper.FluxAggregatorInterface,
 	logBroadcaster log.Broadcaster,
 	spec Specification,
 	readyForLogs func(),
-	minSubmission, maxSubmission *big.Int,
 ) (*FluxMonitor, error) {
 	fm := &FluxMonitor{
 		pipelineRun:       pipelineRun,
@@ -191,6 +189,7 @@ func NewFluxMonitor(
 		contractAddress:   contractAddress,
 		contractSubmitter: contractSubmitter,
 		deviationChecker:  deviationChecker,
+		submissionChecker: submissionChecker,
 		flags:             flags,
 
 		readyForLogs:   readyForLogs,
@@ -201,8 +200,6 @@ func NewFluxMonitor(
 		hibernationTimer: utils.NewResettableTimer(),
 		idleTimer:        utils.NewResettableTimer(),
 		roundTimer:       utils.NewResettableTimer(),
-		minSubmission:    minSubmission,
-		maxSubmission:    maxSubmission,
 		isHibernating:    false,
 		connected:        abool.New(),
 		backlog: utils.NewBoundedPriorityQueue(map[uint]uint{
@@ -825,16 +822,18 @@ func (fm *FluxMonitor) pollIfEligible(deviationChecker *DeviationChecker) {
 // If the polledAnswer is outside the allowable range, log an error and don't submit.
 // to avoid an onchain reversion.
 func (fm *FluxMonitor) isValidSubmission(l *zap.SugaredLogger, polledAnswer decimal.Decimal) bool {
-	max := decimal.NewFromBigInt(fm.maxSubmission, -fm.spec.Precision)
-	min := decimal.NewFromBigInt(fm.minSubmission, -fm.spec.Precision)
-
-	if polledAnswer.GreaterThan(max) || polledAnswer.LessThan(min) {
-		l.Errorw("polled value is outside acceptable range", "min", min, "max", max, "polled value", polledAnswer)
-		fm.jobORM.RecordError(context.Background(), fm.spec.JobID, "Polled value is outside acceptable range")
-
-		return false
+	if fm.submissionChecker.IsValid(polledAnswer) {
+		return true
 	}
-	return true
+
+	l.Errorw("polled value is outside acceptable range",
+		"min", fm.submissionChecker.Min,
+		"max", fm.submissionChecker.Max,
+		"polled value", polledAnswer,
+	)
+	fm.jobORM.RecordError(context.Background(), fm.spec.JobID, "Polled value is outside acceptable range")
+
+	return false
 }
 
 func (fm *FluxMonitor) roundState(roundID uint32) (flux_aggregator_wrapper.OracleRoundState, error) {
