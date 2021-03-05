@@ -13,11 +13,11 @@ type PollTicker struct {
 	disabled bool
 }
 
-// NewPollTicker constructs a new
-func NewPollTicker(period time.Duration, disabled bool) *PollTicker {
+// NewPollTicker constructs a new PollTicker
+func NewPollTicker(interval time.Duration, disabled bool) *PollTicker {
 	return &PollTicker{
-		ticker:   utils.NewPausableTicker(period),
-		interval: period,
+		ticker:   utils.NewPausableTicker(interval),
+		interval: interval,
 		disabled: disabled,
 	}
 }

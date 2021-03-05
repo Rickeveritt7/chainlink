@@ -28,5 +28,16 @@ func TestKeyStore_Accounts(t *testing.T) {
 func TestKeyStore_GetRoundRobinAddress(t *testing.T) {
 	t.Parallel()
 
-	t.Log("TODO")
+	s, cleanup := cltest.NewStore(t)
+	t.Cleanup(cleanup)
+
+	cltest.MustAddRandomKeyToKeystore(t, s, 0, true)
+	_, k0Address := cltest.MustAddRandomKeyToKeystore(t, s, 0)
+
+	ks := fluxmonitorv2.NewKeyStore(s)
+
+	// Gets the only address in the keystore
+	addr, err := ks.GetRoundRobinAddress()
+	require.NoError(t, err)
+	require.Equal(t, k0Address, addr)
 }

@@ -9,10 +9,6 @@ func (fm *FluxMonitor) ExportedPollIfEligible(threshold, absoluteThreshold float
 	fm.pollIfEligible(NewDeviationChecker(threshold, absoluteThreshold))
 }
 
-func (fm *FluxMonitor) ExportedIsFlagLowered() (bool, error) {
-	return fm.isFlagLowered()
-}
-
 func (fm *FluxMonitor) ExportedProcessLogs() {
 	fm.processLogs()
 }

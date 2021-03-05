@@ -2,7 +2,6 @@ package fluxmonitorv2
 
 import (
 	"github.com/pkg/errors"
-	"github.com/smartcontractkit/chainlink/core/logger"
 	"github.com/smartcontractkit/chainlink/core/services/eth"
 	"github.com/smartcontractkit/chainlink/core/services/job"
 	"github.com/smartcontractkit/chainlink/core/services/log"
@@ -11,6 +10,7 @@ import (
 	"gorm.io/gorm"
 )
 
+// Delegate represents a Flux Monitor delegate
 type Delegate struct {
 	db             *gorm.DB
 	store          *corestore.Store
@@ -56,35 +56,15 @@ func (d *Delegate) ServicesForSpec(spec job.SpecDB) (services []job.Service, err
 		return nil, errors.Errorf("Delegate expects a *job.FluxMonitorSpec to be present, got %v", spec)
 	}
 
-	factory := fluxMonitorFactory{
-		orm:            NewORM(d.store.DB),
-		jobORM:         d.jobORM,
-		pipelineORM:    d.pipelineORM,
-		keyStore:       NewKeyStore(d.store),
-		ethClient:      d.store.EthClient,
-		logBroadcaster: d.logBroadcaster,
-	}
-
-	fm, err := factory.New(
-		Specification{
-			ID:                spec.GetID(),
-			JobID:             spec.FluxMonitorSpec.ID,
-			ContractAddress:   spec.FluxMonitorSpec.ContractAddress.Address(),
-			Precision:         spec.FluxMonitorSpec.Precision,
-			Threshold:         float64(spec.FluxMonitorSpec.Threshold),
-			AbsoluteThreshold: float64(spec.FluxMonitorSpec.AbsoluteThreshold),
-			PollTimerPeriod:   spec.FluxMonitorSpec.PollTimerPeriod,
-			PollTimerDisabled: spec.FluxMonitorSpec.PollTimerDisabled,
-			IdleTimerPeriod:   spec.FluxMonitorSpec.IdleTimerPeriod,
-			IdleTimerDisabled: spec.FluxMonitorSpec.IdleTimerDisabled,
-			MinJobPayment:     spec.FluxMonitorSpec.MinPayment,
-		},
-		PipelineRun{
-			runner: d.pipelineRunner,
-			spec:   *spec.PipelineSpec,
-			jobID:  spec.ID,
-			logger: *logger.Default,
-		},
+	fm, err := NewFromJobSpec(
+		spec,
+		NewORM(d.store.DB),
+		d.jobORM,
+		d.pipelineORM,
+		NewKeyStore(d.store),
+		d.store.EthClient,
+		d.logBroadcaster,
+		d.pipelineRunner,
 		d.cfg,
 	)
 	if err != nil {

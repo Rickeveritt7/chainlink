@@ -1,11 +1,13 @@
 package fluxmonitorv2
 
 import (
+	"context"
 	"encoding/hex"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/pkg/errors"
 	"github.com/smartcontractkit/chainlink/core/logger"
+	"github.com/smartcontractkit/chainlink/core/utils"
 	"gorm.io/gorm"
 )
 
@@ -17,7 +19,7 @@ type ORM interface {
 	DeleteFluxMonitorRoundsBackThrough(aggregator common.Address, roundID uint32) error
 	FindOrCreateFluxMonitorRoundStats(aggregator common.Address, roundID uint32) (FluxMonitorRoundStatsV2, error)
 	UpdateFluxMonitorRoundStats(aggregator common.Address, roundID uint32, runID int64) error
-	CreateEthTransaction(fromAddress, toAddress common.Address, payload []byte, gasLimit uint64) error
+	CreateEthTransaction(fromAddress, toAddress common.Address, payload []byte, gasLimit uint64, maxUnconfirmedTransactions uint64) error
 }
 
 type orm struct {
@@ -95,8 +97,18 @@ func (o *orm) CreateEthTransaction(
 	toAddress common.Address,
 	payload []byte,
 	gasLimit uint64,
+	maxUnconfirmedTransactions uint64,
 ) error {
-	// We don't want to send any ETH
+	db, err := o.db.DB()
+	if err != nil {
+		return errors.Wrap(err, "orm#CreateEthTransaction")
+	}
+
+	err = utils.CheckOKToTransmit(context.Background(), db, fromAddress, maxUnconfirmedTransactions)
+	if err != nil {
+		return errors.Wrap(err, "orm#CreateEthTransaction")
+	}
+
 	value := 0
 
 	dbtx := o.db.Exec(`

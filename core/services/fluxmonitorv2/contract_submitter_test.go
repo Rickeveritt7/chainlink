@@ -17,7 +17,7 @@ func TestFluxAggregatorContractSubmitter_Submit(t *testing.T) {
 		orm            = new(fmmocks.ORM)
 		keyStore       = new(fmmocks.KeyStoreInterface)
 		gasLimit       = uint64(2100)
-		submitter      = fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm, keyStore, gasLimit)
+		submitter      = fluxmonitorv2.NewFluxAggregatorContractSubmitter(fluxAggregator, orm, keyStore, gasLimit, 0)
 
 		toAddress   = cltest.NewAddress()
 		fromAddress = cltest.NewAddress()
@@ -30,7 +30,7 @@ func TestFluxAggregatorContractSubmitter_Submit(t *testing.T) {
 
 	keyStore.On("GetRoundRobinAddress").Return(fromAddress, nil)
 	fluxAggregator.On("Address").Return(toAddress)
-	orm.On("CreateEthTransaction", fromAddress, toAddress, payload, gasLimit).Return(nil)
+	orm.On("CreateEthTransaction", fromAddress, toAddress, payload, gasLimit, uint64(0)).Return(nil)
 
 	err = submitter.Submit(roundID, submission)
 	assert.NoError(t, err)

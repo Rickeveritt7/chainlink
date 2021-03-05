@@ -18,7 +18,7 @@ type Flags struct {
 func NewFlags(addrHex string, ethClient eth.Client) (*Flags, error) {
 	flags := &Flags{}
 
-	if addrHex != "" {
+	if addrHex == "" {
 		return flags, nil
 	}
 
