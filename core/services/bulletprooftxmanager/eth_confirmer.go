@@ -388,6 +388,11 @@ func (ec *ethConfirmer) saveFetchedReceipts(ctx context.Context, receipts []Rece
 // In this case we mark these transactions as 'confirmed_missing_receipt' to
 // prevent gas bumping.
 //
+// FIXME: We should continue to attempt to resend eth_txes in this state on
+// every head to guard against the extremely rare scenario of nonce gap due to
+// reorg that excludes the transaction that had this nonce (until finality
+// depth is reached).
+//
 // We will continue to try to fetch a receipt for these attempts until all
 // attempts are below the finality depth from current head.
 func (ec *ethConfirmer) markConfirmedMissingReceipt(ctx context.Context) (err error) {
@@ -409,8 +414,9 @@ AND nonce < (
 
 // markOldTxesMissingReceiptAsErrored
 //
-// Once eth_tx has all of its attempts broadcast before some cutoff threshold,
-// we mark it as fatally errored (never sent).
+// Once eth_tx has all of its attempts broadcast before some cutoff threshold
+// without receiving any receipts, we mark it as fatally errored (never sent).
+// FIXME: Add eth_tx with NO attempts here as well?
 //
 // The job run will also be marked as errored in this case since we never got a
 // receipt and thus cannot pass on any transaction hash
@@ -610,6 +616,7 @@ func FindEthTxsRequiringResubmissionDueToInsufficientEth(db *gorm.DB, address ge
 // FindEthTxsRequiringGasBump returns transactions that have all
 // attempts which are unconfirmed for at least gasBumpThreshold blocks,
 // limited by limit pending transactions
+// It also returns eth_txes that are unconfirmed with no eth_tx_attempts
 func FindEthTxsRequiringGasBump(db *gorm.DB, address gethCommon.Address, blockNum, gasBumpThreshold, depth int64) (etxs []models.EthTx, err error) {
 	q := db.
 		Preload("EthTxAttempts", func(db *gorm.DB) *gorm.DB {
@@ -654,6 +661,8 @@ func (ec *ethConfirmer) attemptForRebroadcast(etx models.EthTx) (attempt models.
 			"ethTxID", etx.ID, "nonce", etx.Nonce, "originalGasPrice", previousGasPrice.String(),
 			"bumpedGasPrice", bumpedGasPrice.String(), "previousTxHash", previousAttempt.Hash, "previousAttemptID", previousAttempt.ID)
 	} else {
+		// FIXME: This is no longer a bug after the changes to EthBroadcaster,
+		// eth_txes can move from confirmed_missing_receipt to unconfirmed now.
 		logger.Errorf("invariant violation: EthTx %v was unconfirmed but didn't have any attempts. "+
 			"Falling back to default gas price instead."+
 			"This is a bug! Please report to https://github.com/smartcontractkit/chainlink/issues", etx.ID)

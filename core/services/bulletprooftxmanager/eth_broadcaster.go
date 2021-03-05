@@ -5,9 +5,11 @@ package bulletprooftxmanager
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/smartcontractkit/chainlink/core/assets"
 	"github.com/smartcontractkit/chainlink/core/logger"
 	"github.com/smartcontractkit/chainlink/core/services/eth"
 	"github.com/smartcontractkit/chainlink/core/services/postgres"
@@ -16,6 +18,7 @@ import (
 	"github.com/smartcontractkit/chainlink/core/store/orm"
 	"github.com/smartcontractkit/chainlink/core/utils"
 
+	"github.com/ethereum/go-ethereum/common"
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/pkg/errors"
 	"gorm.io/gorm"
@@ -54,20 +57,24 @@ type ethBroadcaster struct {
 	// trigger allows other goroutines to force ethBroadcaster to rescan the
 	// database early (before the next poll interval)
 	trigger chan struct{}
-	chStop  chan struct{}
-	wg      sync.WaitGroup
+
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	wg        sync.WaitGroup
 
 	utils.StartStopOnce
 }
 
 // NewEthBroadcaster returns a new concrete ethBroadcaster
 func NewEthBroadcaster(store *store.Store, config orm.ConfigReader, eventBroadcaster postgres.EventBroadcaster) EthBroadcaster {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &ethBroadcaster{
 		store:            store,
 		config:           config,
 		ethClient:        store.EthClient,
 		trigger:          make(chan struct{}, 1),
-		chStop:           make(chan struct{}),
+		ctx:              ctx,
+		ctxCancel:        cancel,
 		wg:               sync.WaitGroup{},
 		eventBroadcaster: eventBroadcaster,
 	}
@@ -90,6 +97,9 @@ func (eb *ethBroadcaster) Start() error {
 	eb.wg.Add(1)
 	go eb.ethTxInsertTriggerer()
 
+	// TODO: Fetch latest nonce
+	eb.recoverChainNonce()
+
 	return nil
 }
 
@@ -102,7 +112,7 @@ func (eb *ethBroadcaster) Stop() error {
 		eb.ethTxInsertListener.Close()
 	}
 
-	close(eb.chStop)
+	eb.ctxCancel()
 	eb.wg.Wait()
 
 	return nil
@@ -121,7 +131,7 @@ func (eb *ethBroadcaster) ethTxInsertTriggerer() {
 		select {
 		case <-eb.ethTxInsertListener.Events():
 			eb.Trigger()
-		case <-eb.chStop:
+		case <-eb.ctx.Done():
 			return
 		}
 	}
@@ -258,7 +268,7 @@ func (eb *ethBroadcaster) handleInProgressEthTx(etx models.EthTx, attempt models
 		return errors.Errorf("invariant violation: expected transaction %v to be in_progress, it was %s", etx.ID, etx.State)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), maxEthNodeRequestTime)
+	ctx, cancel := context.WithTimeout(eb.ctx, maxEthNodeRequestTime)
 	defer cancel()
 	sendError := sendTransaction(ctx, eb.ethClient, attempt)
 
@@ -491,10 +501,67 @@ func (eb *ethBroadcaster) getNextNonceWithInitialLoad(address gethCommon.Address
 		return *nonce, nil
 	}
 
-	return eb.loadAndSaveNonce(address)
+	return eb.initialLoadAndSaveNonce(address)
 }
 
-func (eb *ethBroadcaster) loadAndSaveNonce(address gethCommon.Address) (int64, error) {
+// FIXME: Do on start, but only while locked
+func (eb *ethBroadcaster) fastForwardNonceIfNecessary(address common.Address) error {
+	chainNonce, err := eb.pendingNonceFromEthClient(address)
+	if err != nil {
+		return errors.Wrap(err, "GetNextNonce failed to loadInitialNonceFromEthClient")
+	}
+	localNonce, err := GetNextNonce(eb.store.DB, address)
+	if err != nil {
+		return err
+	}
+	if localNonce == nil {
+		// TODO: HANDLE
+	}
+	if chainNonce <= uint64(*localNonce) {
+		return nil
+	}
+
+	backfillToNonce := chainNonce - 1
+	backfillFromNonce := backfillToNonce - uint64(eb.config.EthFinalityDepth())
+	if backfillFromNonce < uint64(*localNonce) {
+		backfillFromNonce = uint64(*localNonce)
+	}
+	// eb.logger.Warnw("EthBroadcaster: chain nonce is ahead of local nonce, fast-forwarding", "chainNonce", chainNonce, "localNonce", localNonce)
+	// TODO: Set local next nonce
+	postgres.GormTransaction(eb.ctx, eb.store.DB, func(tx *gorm.DB) error {
+		res := tx.Exec(`UPDATE keys SET next_nonce = ? address = ?`, address)
+		if res.Error != nil {
+			return res.Error
+		}
+		// NOTE: It is not possible to query transactions for an account using ethereum RPC (they are not indexed)
+		// This is for re-org protection only, so we can simply insert zero transactions
+		return insertZeroTransactions(backfillFromNonce, backfillToNonce)
+
+	})
+	// TODO: Back-populate ETH_FINALITY_DEPTH transactions (and make sure this is filled out on every start even if nonce is correct since it might change on reboot)
+}
+
+func insertZeroTransactions(tx *gorm.DB, fromAddress common.Address, fromNonce, toNonce uint64) error {
+	if fromNonce > toNonce {
+		return errors.Errorf("fromNonce of %v was greater than toNonce of %v", fromNonce, toNonce)
+	}
+	var valueStrs []string
+	var valueArgs []interface{}
+	for n := fromNonce; n <= toNonce; n++ {
+		valueStrs = append(valueStrs, "(?,?,?,?,?,?,?)")
+		// FIXME: Don't hardcode the base fee
+		valueArgs = append(valueArgs, n, fromAddress, fromAddress, nil, 0, 21000, models.EthTxConfirmedMissingReceipt)
+	}
+
+	/* #nosec G201 */
+	sql := `INSERT INTO eth_txes (nonce, from_address, to_address, encoded_payload, value, gas_limit, state) VALUES %s`
+
+	stmt := fmt.Sprintf(sql, strings.Join(valueStrs, ","))
+	return tx.Exec(stmt, valueArgs...).Error
+
+}
+
+func (eb *ethBroadcaster) initialLoadAndSaveNonce(address gethCommon.Address) (int64, error) {
 	logger.Debugw("EthBroadcaster: loading next nonce from eth node", "address", address.Hex())
 	nonce, err := eb.loadInitialNonceFromEthClient(address)
 	if err != nil {
@@ -520,8 +587,8 @@ func (eb *ethBroadcaster) loadAndSaveNonce(address gethCommon.Address) (int64, e
 	return int64(nonce), nil
 }
 
-func (eb *ethBroadcaster) loadInitialNonceFromEthClient(account gethCommon.Address) (nextNonce uint64, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), maxEthNodeRequestTime)
+func (eb *ethBroadcaster) pendingNonceFromEthClient(account gethCommon.Address) (nextNonce uint64, err error) {
+	ctx, cancel := context.WithTimeout(eb.ctx, maxEthNodeRequestTime)
 	defer cancel()
 	nextNonce, err = eb.ethClient.PendingNonceAt(ctx, account)
 	return nextNonce, errors.WithStack(err)
