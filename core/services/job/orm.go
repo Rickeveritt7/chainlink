@@ -123,6 +123,7 @@ func (o *orm) ClaimUnclaimedJobs(ctx context.Context) ([]SpecDB, error) {
 	err := o.db.
 		Joins(join, args...).
 		Preload("OffchainreportingOracleSpec").
+		Preload("KeeperSpec").
 		Preload("PipelineSpec.PipelineTaskSpecs").
 		Find(&newlyClaimedJobs).Error
 	if err != nil {
@@ -276,6 +277,7 @@ func (o *orm) JobsV2() ([]SpecDB, error) {
 		Preload("DirectRequestSpec").
 		Preload("FluxMonitorSpec").
 		Preload("JobSpecErrors").
+		Preload("KeeperSpec").
 		Find(&jobs).
 		Error
 	for i := range jobs {
@@ -317,6 +319,7 @@ func (o *orm) FindJob(id int32) (SpecDB, error) {
 		Preload("FluxMonitorSpec").
 		Preload("DirectRequestSpec").
 		Preload("JobSpecErrors").
+		Preload("KeeperSpec").
 		First(&job, "jobs.id = ?", id).
 		Error
 	if job.OffchainreportingOracleSpec != nil {
