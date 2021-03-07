@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/smartcontractkit/chainlink/core/store"
 	"github.com/smartcontractkit/chainlink/core/store/dialects"
 
 	"github.com/smartcontractkit/chainlink/core/services"
@@ -1761,7 +1760,7 @@ func EventuallyExpectationsMet(t *testing.T, mock testifyExpectationsAsserter, t
 	}
 }
 
-func AssertCount(t *testing.T, store *store.Store, model interface{}, expected int64) {
+func AssertCount(t *testing.T, store *strpkg.Store, model interface{}, expected int64) {
 	var count int64
 	store.DB.Model(model).Count(&count)
 	require.Equal(t, expected, count)
@@ -1776,7 +1775,7 @@ func WaitForCount(t testing.TB, store *strpkg.Store, model interface{}, want int
 		err = store.DB.Model(model).Count(&count).Error
 		assert.NoError(t, err)
 		return count
-	}, DBWaitTimeout, DBPollingInterval).Should(gomega.Equal(want))
+	}, 5*time.Second, DBPollingInterval).Should(gomega.Equal(want))
 }
 
 func AssertCountStays(t testing.TB, store *strpkg.Store, model interface{}, want int64) {
