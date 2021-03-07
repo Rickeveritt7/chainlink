@@ -5,7 +5,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const up11 = `
+const up13 = `
 		CREATE TABLE keeper_specs (
 			id BIGSERIAL PRIMARY KEY,
 			contract_address bytea NOT NULL,
@@ -47,7 +47,7 @@ const up11 = `
 		CREATE UNIQUE INDEX idx_upkeep_registrations_unique_upkeep_ids_per_keeper ON upkeep_registrations(upkeep_id, registry_id);
 	`
 
-const down11 = `
+const down13 = `
 	DROP TABLE IF EXISTS keeper_specs, keeper_registries, upkeep_registrations;
 
 	ALTER TABLE jobs DROP CONSTRAINT chk_only_one_spec,
@@ -60,12 +60,12 @@ const down11 = `
 
 func init() {
 	Migrations = append(Migrations, &gormigrate.Migration{
-		ID: "0011_add_keeper_tables",
+		ID: "0013_add_keeper_tables",
 		Migrate: func(db *gorm.DB) error {
-			return db.Exec(up11).Error
+			return db.Exec(up13).Error
 		},
 		Rollback: func(db *gorm.DB) error {
-			return db.Exec(down11).Error
+			return db.Exec(down13).Error
 		},
 	})
 }
