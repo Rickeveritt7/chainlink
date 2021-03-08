@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	strpkg "github.com/smartcontractkit/chainlink/core/store"
 	"math/big"
 	mrand "math/rand"
 	"reflect"
@@ -193,6 +194,19 @@ func NewBackoffSleeper() *BackoffSleeper {
 		Backoff: backoff.Backoff{
 			Min: 1 * time.Second,
 			Max: 10 * time.Second,
+		},
+		beenRun: abool.New(),
+	}
+}
+
+// NewBackoffSleeper returns a BackoffSleeper that is configured to
+// sleep for 0 seconds initially, then backs off from 1 second minimum
+// to 10 seconds maximum.
+func NewBackoffSleeperFromConfig(store *strpkg.Store) *BackoffSleeper {
+	return &BackoffSleeper{
+		Backoff: backoff.Backoff{
+			Min: time.Duration(store.Config.MinHeadTime()) * time.Second,
+			Max: time.Duration(store.Config.MaxHeadTime()) * time.Second,
 		},
 		beenRun: abool.New(),
 	}

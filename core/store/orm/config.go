@@ -923,6 +923,16 @@ func (c Config) CertFile() string {
 	return c.TLSCertPath()
 }
 
+// MinHeadTime returns the min time to wait for the next block
+func (c Config) MinHeadTime() int64 {
+	return c.viper.GetInt64(EnvVarName("MinHeadTime"))
+}
+
+// MaxHeadTime returns the max time to wait for the next block
+func (c Config) MaxHeadTime() int64 {
+	return c.viper.GetInt64(EnvVarName("MaxHeadTime"))
+}
+
 // CreateProductionLogger returns a custom logger for the config's root
 // directory and LogLevel, with pretty printing for stdout. If LOG_TO_DISK is
 // false, the logger will only log to stdout.

@@ -204,6 +204,7 @@ func NewApplication(config *orm.Config, ethClient eth.Client, advisoryLocker pos
 
 	pendingConnectionResumer := newPendingConnectionResumer(runManager)
 
+	// config
 	app := &ChainlinkApplication{
 		JobSubscriber:            jobSubscriber,
 		GasUpdater:               gasUpdater,
@@ -249,6 +250,8 @@ func NewApplication(config *orm.Config, ethClient eth.Client, advisoryLocker pos
 		}}
 		headTrackables = append(headTrackables, headTrackable)
 	}
+	// crreate new head tracker
+	// pass config here with storer
 	app.HeadTracker = services.NewHeadTracker(store, headTrackables)
 
 	return app

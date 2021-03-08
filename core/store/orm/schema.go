@@ -81,6 +81,8 @@ type ConfigSchema struct {
 	MinIncomingConfirmations                  uint32          `env:"MIN_INCOMING_CONFIRMATIONS" default:"3"`
 	MinRequiredOutgoingConfirmations          uint64          `env:"MIN_OUTGOING_CONFIRMATIONS" default:"12"`
 	MinimumContractPayment                    assets.Link     `env:"MINIMUM_CONTRACT_PAYMENT" default:"1000000000000000000"`
+	MinHeadTime                               int64           `env:"MIN_HEAD_TIME" default:"1"`
+	MaxHeadTime                               int64           `env:"MAX_HEAD_TIME" default:"8"`
 	MinimumRequestExpiration                  uint64          `env:"MINIMUM_REQUEST_EXPIRATION" default:"300"`
 	OCRObservationTimeout                     time.Duration   `env:"OCR_OBSERVATION_TIMEOUT" default:"12s"`
 	OCRObservationGracePeriod                 time.Duration   `env:"OCR_OBSERVATION_GRACE_PERIOD" default:"1s"`
