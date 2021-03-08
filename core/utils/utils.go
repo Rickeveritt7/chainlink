@@ -199,9 +199,8 @@ func NewBackoffSleeper() *BackoffSleeper {
 	}
 }
 
-// NewBackoffSleeper returns a BackoffSleeper that is configured to
-// sleep for 0 seconds initially, then backs off from 1 second minimum
-// to 10 seconds maximum.
+// NewBackoffSleeperFromConfig returns a BackoffSleeper that is configured to
+// sleep from a configured min & max wait time
 func NewBackoffSleeperFromConfig(store *strpkg.Store) *BackoffSleeper {
 	return &BackoffSleeper{
 		Backoff: backoff.Backoff{
