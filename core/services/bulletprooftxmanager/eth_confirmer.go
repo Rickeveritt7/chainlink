@@ -391,7 +391,7 @@ func (ec *ethConfirmer) saveFetchedReceipts(ctx context.Context, receipts []Rece
 // FIXME: We should continue to attempt to resend eth_txes in this state on
 // every head to guard against the extremely rare scenario of nonce gap due to
 // reorg that excludes the transaction that had this nonce (until finality
-// depth is reached).
+// depth is reached, after which we make the explicit decision to give up).
 //
 // We will continue to try to fetch a receipt for these attempts until all
 // attempts are below the finality depth from current head.
