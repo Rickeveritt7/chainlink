@@ -140,7 +140,7 @@ func NewHeadTracker(store *strpkg.Store, callbacks []strpkg.HeadTrackable, sleep
 	if len(sleepers) > 0 {
 		sleeper = sleepers[0]
 	} else {
-		sleeper = utils.NewBackoffSleeperFromConfig(store)
+		sleeper = utils.NewBackoffSleeperFromConfig(store.Config.MinHeadTime(), store.Config.MaxHeadTime())
 	}
 	return &HeadTracker{
 		store:      store,
